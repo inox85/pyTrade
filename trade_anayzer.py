@@ -10,7 +10,7 @@ PLOT=False
 
 BACK_ROLLING_N = 6
 
-BARS_UPFRONT_FOR_TARGET = 16
+BARS_UPFRONT_FOR_TARGET = 6
 
 class TradeAnalyzer:
     def __init__(self):
@@ -227,7 +227,7 @@ class TradeAnalyzer:
 
         print(X)
 
-        train_set_ratio = 0.8
+        train_set_ratio = 0.5
         #sequential sampling
         train_index = int(train_set_ratio * len(X))
         X_train, X_test = X[:train_index], X[train_index:]
