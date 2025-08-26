@@ -8,7 +8,7 @@ from matplotlib.patches import Rectangle
 
 PLOT=False
 
-BACK_ROLLING_N = 6
+BACK_ROLLING_N = 16
 
 BARS_UPFRONT_FOR_TARGET = 6
 
@@ -24,7 +24,7 @@ class TradeAnalyzer:
             import dukascopy_python
             from dukascopy_python.instruments import INSTRUMENT_FX_MAJORS_GBP_USD, INSTRUMENT_US_PLTR_US_USD
 
-            start = datetime(2017, 1, 1)
+            start = datetime(2010, 1, 1)
             end = datetime(2024, 1, 1)
 
             interval = dukascopy_python.INTERVAL_DAY_1
@@ -38,7 +38,7 @@ class TradeAnalyzer:
                 end,
             )
 
-            df.reset_index(inplace=True)
+            df = df.reset_index()
 
             # Rinomina le colonne
             df.rename(columns={
@@ -59,19 +59,19 @@ class TradeAnalyzer:
 
         self.df_main = pd.read_csv(f"data/{selected_instrument.split('.')[0]}.csv")
 
-                #Check if any zero volumes are available
         indexZeros = self.df_main[ self.df_main['Volume'] == 0 ].index
 
         self.df_main.drop(indexZeros , inplace=True)
         self.df_main.loc[(self.df_main["Volume"] == 0 )]
         self.df_main.isna().sum()
-        
-        #print(self.df_main)
 
-        #print(self.df_main.isna().sum())
     
     def create_tecnical_indicators(self):
         import pandas_ta as ta
+        import numpy as np
+        from sklearn.preprocessing import MinMaxScaler
+        from scipy.stats import linregress
+
         self.df_main['ATR'] = self.df_main.ta.atr(length=20)
         self.df_main['RSI'] = self.df_main.ta.rsi()
         self.df_main['Average'] = self.df_main.ta.midprice(length=1) #midprice
@@ -143,7 +143,7 @@ class TradeAnalyzer:
 
 
     def get_target(self):
-        pipdiff = 1000*1e-5 #for TP
+        pipdiff = 500*1e-5 #for TP
         SLTPRatio = 2 #pipdiff/Ratio gives SL
 
         def mytarget(barsupfront, df1):
@@ -199,7 +199,7 @@ class TradeAnalyzer:
         buy_signal = np.where(df['predictedTarget'] == 2, df['Low']*0.995, np.nan)   # leggermente sotto il minimo della candela
         sell_signal = np.where(df['predictedTarget'] == 1, df['High']*1.005, np.nan) # leggermente sopra il massimo della candela
 
-        # Aggiungi i marker al grafico
+        # Aggiungi i marker al grafico1
         apds = [
             mpf.make_addplot(buy_signal, type='scatter', markersize=20, marker='^', color='green'),
             mpf.make_addplot(sell_signal, type='scatter', markersize=20, marker='v', color='red')
@@ -242,7 +242,6 @@ class TradeAnalyzer:
         acc_train = accuracy_score(y_train, pred_train)
         acc_test = accuracy_score(y_test, pred_test)
 
-
         # Copia indipendente del DataFrame
         df_model = self.df_main.dropna().copy()
 
@@ -250,6 +249,7 @@ class TradeAnalyzer:
         train_index = int(train_set_ratio * len(df_model))
         test_df = df_model.iloc[train_index:].copy()  # il test set come DataFrame separato
 
+        
         # Se la lunghezza del test set coincide con le predizioni
         if len(test_df) == len(pred_test):
             df_model.loc[test_df.index, 'predictedTarget'] = pred_test
@@ -259,6 +259,10 @@ class TradeAnalyzer:
         # Verifica
         print(df_model[['mytarget','predictedTarget']].tail(len(test_df)))
 
+        for row in df_model.itertuples():
+            if row.predictedTarget == 2:
+                print(row.Index, row)   # Index = indice della riga
+
         print('****Train Results****')
         print("Accuracy: {:.4%}".format(acc_train))
         print('****Test Results****')
@@ -267,4 +271,6 @@ class TradeAnalyzer:
         self.model = model
         self.attributes = attributes
 
-        self.plot_candlestick_with_signals(df_model, start_index=train_index, num_rows=10)
+        #self.plot_candlestick_with_signals(df_model, start_index=train_index, num_rows=10)
+
+        

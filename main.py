@@ -1,22 +1,20 @@
-from trade_anayzer import TradeAnalyzer
-from dukascopy_python.instruments import INSTRUMENT_US_PLTR_US_USD
+#from trade_anayzer import TradeAnalyzer
+from dukascopy_python.instruments import INSTRUMENT_US_PLTR_US_USD, INSTRUMENT_VCCY_ETH_USD
+from data_downloader import DataDownloader
+from candlestick_analyzer import CandlestickAnalyzer, Strategy_02, Strategy_01, run_backtest
 
-ta = TradeAnalyzer()
+#DataDownloader.download_data_to_csv_yf(INSTRUMENT_US_PLTR_US_USD)
+#DataDownloader.download_data_to_csv(INSTRUMENT_VCCY_ETH_USD)
+DataDownloader.download_data_to_csv("USA500.IDX/USD")
 
-ta.load_data(INSTRUMENT_US_PLTR_US_USD)
+ca = CandlestickAnalyzer()
 
-#ta.load_data("USA500.IDX/USD")
+dataframes = ca.execute()
 
-#ta.create_tecnical_indicators()
+results = []
+for df in dataframes:
+    results.append(run_backtest(Strategy_02, df))
 
-#ta.get_target()
+for r in results:
+    print(r)
 
-#ta.train_model()
-
-ta.create_normalized_tecnical_indicators()
-
-ta.get_target()
-
-ta.train_model()
-
-input("Press Enter to exit...")
