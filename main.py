@@ -18,3 +18,4 @@ for df in dataframes:
 for r in results:
     print(r)
 
+#https://www.dukascopy.com/swiss/english/marketwatch/historical
