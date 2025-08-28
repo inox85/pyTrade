@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 
 async def main():
     at = AlpacaTrader("PK4TFTC9YYDHD5S51QNM", "10KDzFIhvTokJUnMStGCW6IioaEUJaEdCoJch7qo")
-    await at.start_all()
+    #await at.start_all()
+    await at.optimize()
 
 asyncio.run(main())

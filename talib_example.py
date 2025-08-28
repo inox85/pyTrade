@@ -10,7 +10,7 @@ from datetime import datetime
 # -------------------
 # Config
 # -------------------
-instrument = INSTRUMENT_US_AAPL_US_USD
+instrument = INSTRUMENT_US_PLTR_US_USD
 commission = 0.0002  # 0,02%
 initial_cash = 1000
 trade_pct = 1  # percentuale del portafoglio da investire
@@ -18,7 +18,7 @@ trade_pct = 1  # percentuale del portafoglio da investire
 df = DataDownloader.download_data_to_dataframe(
     instrument,
     interval=dukascopy_python.INTERVAL_DAY_1,
-    start=datetime(2023, 1, 1),
+    start=datetime(2024, 8, 28),
     end=datetime.now()
 )
 
