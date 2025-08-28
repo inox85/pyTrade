@@ -7,10 +7,7 @@ import dukascopy_python
 import pprint
 from datetime import datetime
 
-# -------------------
-# Config
-# -------------------
-instrument = INSTRUMENT_US_PLTR_US_USD
+instrument = INSTRUMENT_US_AAPL_US_USD
 commission = 0.0002  # 0,02%
 initial_cash = 1000
 trade_pct = 1  # percentuale del portafoglio da investire
@@ -18,16 +15,15 @@ trade_pct = 1  # percentuale del portafoglio da investire
 df = DataDownloader.download_data_to_dataframe(
     instrument,
     interval=dukascopy_python.INTERVAL_DAY_1,
-    start=datetime(2024, 8, 28),
+    start=datetime(2022, 8, 28),
     end=datetime.now()
 )
 
-
 print("Dataframe recuperato da csv:")
 print(df.head())
-# -------------------
-# Indicatori
-# -------------------
+
+# --- Calcolo Indicatori Tecnici ---
+
 # MACD
 macd, macdsignal, macdhist = talib.MACD(df["Close"], fastperiod=10, slowperiod=26, signalperiod=9)
 df["MACD_Buy"] = (macd > macdsignal) & (macd.shift(1) <= macdsignal.shift(1))
@@ -58,8 +54,22 @@ df["VWAP"] = (df["Close"] * df["Volume"]).cumsum() / df["Volume"].cumsum()
 df["VWAP_Buy"] = df["Close"] > df["VWAP"]
 df["VWAP_Sell"] = df["Close"] < df["VWAP"]
 
+# --- NUOVI INDICATORI BASATI SUI VOLUMI ---
+
+# 1. Money Flow Index (MFI)
+mfi = talib.MFI(df['High'], df['Low'], df['Close'], df['Volume'], timeperiod=14)
+df['MFI_Buy'] = mfi < 20  # Ipervenduto
+df['MFI_Sell'] = mfi > 80 # Ipercomprato
+
+# 2. Anomalia di Volume (Volume Spike)
+sma_volume = talib.SMA(df['Volume'], timeperiod=20)
+volume_spike = df['Volume'] > (sma_volume * 2.0) # Il volume è più del doppio della sua media a 20 periodi
+df['VolAnomaly_Buy'] = volume_spike & (df['Close'] > df['Open'])  # Spike di volume su candela verde
+df['VolAnomaly_Sell'] = volume_spike & (df['Close'] < df['Open']) # Spike di volume su candela rossa
+
+
 # -------------------
-# Funzione simulazione portafoglio
+# Funzione simulazione portafoglio (INVARIATA)
 # -------------------
 def simulate_portfolio(df, buy_col, sell_col, portfolio_col, stop_loss_pct=0.02, take_profit_pct=0.04):
     """
@@ -81,7 +91,7 @@ def simulate_portfolio(df, buy_col, sell_col, portfolio_col, stop_loss_pct=0.02,
             if stop_loss_pct is not None and price <= entry_price * (1 - stop_loss_pct):
                 # Stop loss
                 exit_value = position * price * (1 - commission)
-                trades.append(exit_value - entry_price * position)
+                trades.append(exit_value - (position * entry_price)) # Calcolo profitto/perdita
                 cash += exit_value
                 position = 0.0
                 entry_price = 0.0
@@ -89,7 +99,7 @@ def simulate_portfolio(df, buy_col, sell_col, portfolio_col, stop_loss_pct=0.02,
             elif take_profit_pct is not None and price >= entry_price * (1 + take_profit_pct):
                 # Take profit
                 exit_value = position * price * (1 - commission)
-                trades.append(exit_value - entry_price * position)
+                trades.append(exit_value - (position * entry_price)) # Calcolo profitto/perdita
                 cash += exit_value
                 position = 0.0
                 entry_price = 0.0
@@ -105,7 +115,7 @@ def simulate_portfolio(df, buy_col, sell_col, portfolio_col, stop_loss_pct=0.02,
         # Vendita
         elif df[sell_col].iloc[i] and position > 0:
             exit_value = position * price * (1 - commission)
-            trades.append(exit_value - entry_price * position)
+            trades.append(exit_value - (position * entry_price)) # Calcolo profitto/perdita
             cash += exit_value
             position = 0.0
             entry_price = 0.0
@@ -146,6 +156,10 @@ report_bb   = simulate_portfolio(df, "BB_Buy", "BB_Sell", "Portfolio_BB")
 report_eng  = simulate_portfolio(df, "Engulfing_Buy", "Engulfing_Sell", "Portfolio_Eng")
 report_obv  = simulate_portfolio(df, "OBV_Buy", "OBV_Sell", "Portfolio_OBV")
 report_vwap = simulate_portfolio(df, "VWAP_Buy", "VWAP_Sell", "Portfolio_VWAP")
+# --- NUOVE SIMULAZIONI ---
+report_mfi = simulate_portfolio(df, "MFI_Buy", "MFI_Sell", "Portfolio_MFI")
+report_vol_anomaly = simulate_portfolio(df, "VolAnomaly_Buy", "VolAnomaly_Sell", "Portfolio_VolAnomaly")
+
 
 print("\n--- REPORT PERFORMANCE ---")
 print("\nMACD:"); pprint.pprint(report_macd)
@@ -154,32 +168,50 @@ print("\nBollinger Bands:"); pprint.pprint(report_bb)
 print("\nEngulfing:"); pprint.pprint(report_eng)
 print("\nOBV:"); pprint.pprint(report_obv)
 print("\nVWAP:"); pprint.pprint(report_vwap)
+# --- NUOVI REPORT ---
+print("\nMoney Flow Index (MFI):"); pprint.pprint(report_mfi)
+print("\nVolume Anomaly:"); pprint.pprint(report_vol_anomaly)
 
-# -------------------
-# Grafico con segnali BUY/SELL
-# -------------------
 
-#buy_marker = df["Close"].where(df["MACD_Buy"] | df["RSI_Buy"] | df["BB_Buy"] | df["Engulfing_Buy"] | df["OBV_Buy"] | df["VWAP_Buy"])
-#sell_marker = df["Close"].where(df["MACD_Sell"] | df["RSI_Sell"] | df["BB_Sell"] | df["Engulfing_Sell"] | df["OBV_Sell"] | df["VWAP_Sell"])
+# Esempio per visualizzare i segnali di uno dei nuovi indicatori (Bollinger Bands)
+buy_marker = df["Close"].where(df["BB_Buy"])
+sell_marker = df["Close"].where(df["BB_Sell"])
 
-buy_marker = df["Close"].where( df["BB_Buy"] )
-sell_marker = df["Close"].where( df["BB_Sell"] )
-
+# Lista base per i pannelli aggiuntivi
 apds = [
-    mpf.make_addplot(macd, panel=1, color="blue", ylabel=instrument),
-    mpf.make_addplot(macdsignal, panel=1, color="orange"),
-    mpf.make_addplot(macdhist, panel=1, type="bar", color="gray"),
+    # Pannello 2: MACD
+    mpf.make_addplot(macd, panel=2, color="blue", ylabel="MACD"),
+    mpf.make_addplot(macdsignal, panel=2, color="orange"),
+    mpf.make_addplot(macdhist, panel=2, type="bar", color="gray"),
+    
+    # Pannello 3: MFI
+    mpf.make_addplot(mfi, panel=3, color='purple', ylabel='MFI'),
+    mpf.make_addplot([80]*len(df), panel=3, color='r', linestyle='--'),
+    mpf.make_addplot([20]*len(df), panel=3, color='g', linestyle='--'),
+    
+    # Linea VWAP sul grafico principale
     mpf.make_addplot(df["VWAP"], color="purple", linestyle="--"),
-    mpf.make_addplot(buy_marker, type="scatter", markersize=100, marker="^", color="green"),
-    mpf.make_addplot(sell_marker, type="scatter", markersize=100, marker="v", color="red")
 ]
 
+# --- CONTROLLO DI SICUREZZA ---
+# Aggiungi i segnali al grafico SOLO SE esistono dei segnali validi
+
+if buy_marker.notna().any():
+    print("Trovati segnali di acquisto da plottare.")
+    apds.append(mpf.make_addplot(buy_marker, type="scatter", markersize=100, marker="^", color="green"))
+
+if sell_marker.notna().any():
+    print("Trovati segnali di vendita da plottare.")
+    apds.append(mpf.make_addplot(sell_marker, type="scatter", markersize=100, marker="v", color="red"))
+
+# Ora esegui il plot
 mpf.plot(
     df,
     type="candle",
     volume=True,
     addplot=apds,
     style="yahoo",
-    title=instrument,
-    show_nontrading=False
+    title=f"{instrument} with MFI signals",
+    show_nontrading=False,
+    panel_ratios=(6, 1, 2, 2) # (principale, volume, macd, mfi)
 )

@@ -187,6 +187,7 @@ def plot_results(df, buy_clm, sell_clm):
         show_nontrading=False
     )
 class MarketPatternScanner:
+
     class BollingerBands:
         def __init__(self, timeperiod=10, nbdevup=2, nbdevdn=2, matype=0):
             self.timeperiod = timeperiod
