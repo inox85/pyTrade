@@ -2,7 +2,7 @@ import pandas as pd
 import talib
 import mplfinance as mpf
 from data_downloader import DataDownloader
-from dukascopy_python.instruments import INSTRUMENT_US_PLTR_US_USD, INSTRUMENT_US_AAPL_US_USD
+from dukascopy_python.instruments import INSTRUMENT_US_AAPL_US_USD
 import dukascopy_python
 import pprint
 from datetime import datetime
@@ -147,19 +147,14 @@ def simulate_portfolio(df, buy_col, sell_col, portfolio_col, stop_loss_pct=0.02,
         "Max Drawdown": max_drawdown
     }
 
-# -------------------
-# Simulazioni
-# -------------------
 report_macd = simulate_portfolio(df, "MACD_Buy", "MACD_Sell", "Portfolio_MACD")
 report_rsi  = simulate_portfolio(df, "RSI_Buy", "RSI_Sell", "Portfolio_RSI")
 report_bb   = simulate_portfolio(df, "BB_Buy", "BB_Sell", "Portfolio_BB")
 report_eng  = simulate_portfolio(df, "Engulfing_Buy", "Engulfing_Sell", "Portfolio_Eng")
 report_obv  = simulate_portfolio(df, "OBV_Buy", "OBV_Sell", "Portfolio_OBV")
 report_vwap = simulate_portfolio(df, "VWAP_Buy", "VWAP_Sell", "Portfolio_VWAP")
-# --- NUOVE SIMULAZIONI ---
 report_mfi = simulate_portfolio(df, "MFI_Buy", "MFI_Sell", "Portfolio_MFI")
 report_vol_anomaly = simulate_portfolio(df, "VolAnomaly_Buy", "VolAnomaly_Sell", "Portfolio_VolAnomaly")
-
 
 print("\n--- REPORT PERFORMANCE ---")
 print("\nMACD:"); pprint.pprint(report_macd)
