@@ -64,7 +64,7 @@ class AlpacaTrader:
         timeframe = self.timeframe
         #candles = self.get_candles(symbol, timeframe, start_date, end_date)
         #candles = DataDownloader.download_data_to_dataframe("PLTR", interval=dukascopy_python.INTERVAL_DAY_1)
-        dframe = DataDownloader.download_data_to_dataframe( INSTRUMENT_US_QCOM_US_USD, interval=dukascopy_python.INTERVAL_HOUR_1, start=datetime(2025,7,26), end=datetime.now())
+        dframe = DataDownloader.download_data_to_dataframe( INSTRUMENT_US_AAPL_US_USD, interval=dukascopy_python.INTERVAL_DAY_1, start=datetime(2024,8,28), end=datetime.now())
 
         print(dframe)
 
@@ -96,7 +96,7 @@ class AlpacaTrader:
             symbol = self.symbol
             timeframe = self.timeframe
 
-            dframe = DataDownloader.download_data_to_dataframe(INSTRUMENT_US_AAPL_US_USD, interval=dukascopy_python.INTERVAL_HOUR_1)
+            dframe = DataDownloader.download_data_to_dataframe(INSTRUMENT_US_NVDA_US_USD, interval=dukascopy_python.INTERVAL_HOUR_1)
 
             print(dframe)
 
@@ -207,7 +207,9 @@ class MarketPatternScanner:
         def run_optimization(self, df):
             print("Running optimization...")
             wrate = 0
+            wrate_trades = 0
             profit = 0
+            profit_trades = 0
             from tqdm import tqdm
             for i in tqdm(range(100000)):
                 period = random.randint(8, 15)
@@ -221,10 +223,17 @@ class MarketPatternScanner:
                     df["BB_Buy"] = df["Close"] < lower
                     df["BB_Sell"] = df["Close"] > upper
                     report = MarketPatternScanner.Statistics.simulate_portfolio(df, "BB_Buy", "BB_Sell", "Portfolio", stop_loss_pct=stop_loss_pct, take_profit_pct=take_profit_pct)
-                    if report["Final Portfolio"] > profit:
+                    if report["Final Portfolio"] > profit and report["Number of Trades"] >= profit_trades :
+                        profit_trades = report["Number of Trades"]
                         profit = report["Final Portfolio"]
                         print()
-                        print(f"New best profit: {profit:.2f} with params: period={period}, nbdevup={nbup:.2f}, nbdevdn={nbdn:.2f}, matype={matype}, stop_loss_pct={stop_loss_pct:.2f}, take_profit_pct={take_profit_pct:.2f}")
+                        print(f"New best profit: {profit:.2f} with wrate {report["Win rate %"]} with number {profit_trades} trades and with with params: period={period}, nbdevup={nbup:.2f}, nbdevdn={nbdn:.2f}, matype={matype}, stop_loss_pct={stop_loss_pct:.2f}, take_profit_pct={take_profit_pct:.2f}")
+                        print()
+                    if report["Win rate %"] > wrate and report["Number of Trades"] >= wrate_trades:
+                        wrate_trades = report["Number of Trades"]
+                        wrate = report["Win rate %"]
+                        print()
+                        print(f"New best wrate: {wrate:.2f} with profit {report["Final Portfolio"]} with number {wrate_trades} trades and with params: period={period}, nbdevup={nbup:.2f}, nbdevdn={nbdn:.2f}, matype={matype}, stop_loss_pct={stop_loss_pct:.2f}, take_profit_pct={take_profit_pct:.2f}") 
                         print()
             print(f"Best profit after optimization: {profit:.2f}")
 
