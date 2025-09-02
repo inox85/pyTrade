@@ -14,8 +14,8 @@ class DataPreprocessor:
         best_params = None
 
         # Esempio di range dei periodi
-        fast_range = np.arange(5, 30, 1)
-        mid_range  = np.arange(10, 60, 1)
+        fast_range = np.arange(5, 50, 1)
+        mid_range  = np.arange(10, 100, 1)
         slow_range = np.arange(20, 200, 1)
 
         total = len(fast_range) * len(mid_range) * len(slow_range)
@@ -24,7 +24,7 @@ class DataPreprocessor:
         best_params = None
         pbar = tqdm(total=total, desc="Ottimizzazione MACD")
 
-        for fast, slow, signal in tqdm(itertools.product(range(5,30), range(10,60), range(20,100))):
+        for fast, slow, signal in tqdm(itertools.product(range(5,50), range(10,100), range(20,200))):
             if fast >= slow:  # condizione logica, fast deve essere < slow
                 continue
             macd, signal_line, hist = talib.MACD(self.df_final["Close"], fastperiod=fast, slowperiod=slow, signalperiod=signal)
@@ -61,18 +61,23 @@ class DataPreprocessor:
         self.df_final["MACD_Sell"] = (macd < macdsignal) & (macd.shift(1) >= macdsignal.shift(1))
 
         # --- EMA ---
-        self.df_final["EMA_Fast"] = talib.EMA(self.df_final["Close"], timeperiod=macd_params["EMA_Fast_length"])
-        self.df_final["EMA_Mid"]  = talib.EMA(self.df_final["Close"], timeperiod=macd_params["EMA_Mid_length"])
-        self.df_final["EMA_Slow"] = talib.EMA(self.df_final["Close"], timeperiod=macd_params["EMA_Slow_length"])
-
+        self.df_final["EMA_5"] = talib.EMA(self.df_final["Close"], timeperiod=5)
+        self.df_final["EMA_20"]  = talib.EMA(self.df_final["Close"], timeperiod=20)
+        self.df_final["EMA_50"] = talib.EMA(self.df_final["Close"], timeperiod=50)
+        self.df_final["EMA_100"] = talib.EMA(self.df_final["Close"], timeperiod=100)
+        self.df_final["EMA_200"] = talib.EMA(self.df_final["Close"], timeperiod=200)
 
         # Normalizzazione rispetto al prezzo
-        self.df_final["EMA_Fast_norm"] = self.df_final["EMA_Fast"] / self.df_final["Close"]
-        self.df_final["EMA_Mid_norm"]  = self.df_final["EMA_Mid"]  / self.df_final["Close"]
-        self.df_final["EMA_Slow_norm"] = self.df_final["EMA_Slow"] / self.df_final["Close"]
+        self.df_final["EMA_5_norm"] = self.df_final["EMA_5_norm"] / self.df_final["Close"]
+        self.df_final["EMA_20_norm"]  = self.df_final["EMA_20_norm"]  / self.df_final["Close"]
+        self.df_final["EMA_50_norm"] = self.df_final["EMA_50_norm"] / self.df_final["Close"]
+        self.df_final["EMA_100_norm"]  = self.df_final["EMA_100_norm"]  / self.df_final["Close"]
+        self.df_final["EMA_200_norm"] = self.df_final["EMA_200_norm"] / self.df_final["Close"]
 
-        self.df_final["EMA_cross"] = (self.df_final["EMA_Fast"] > self.df_final["EMA_Mid"]).astype(int)
-        self.df_final["EMA10_slope_pct"] = self.df_final["EMA_Fast"].pct_change()
+        self.df_final["EMA_cross"] = (self.df_final["EMA_5_norm"] > self.df_final["EMA_50_norm"]).astype(int)
+        self.df_final["EMA10" \
+        "_slope_pct"] = self.df_final["EMA_10_norm"].pct_change()
+        self.df_final["EMA20_slope_pct"] = self.df_final["EMA_20_norm"].pct_change()
 
         # --- RSI ---
         rsi = talib.RSI(self.df_final["Close"], timeperiod=14)
