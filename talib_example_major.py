@@ -6,94 +6,99 @@ from dukascopy_python.instruments import INSTRUMENT_US_AAPL_US_USD
 import dukascopy_python
 import pprint
 from datetime import datetime
+# ===========================
+#  Download dati
+# ===========================
 
-# --- Parametri generali ---
 instrument = INSTRUMENT_US_AAPL_US_USD
 commission = 0.0002  # 0,02%
 initial_cash = 1000
 trade_pct = 1  # percentuale del portafoglio da investire
 
-# --- Download dati ---
 df = DataDownloader.download_data_to_dataframe(
     instrument,
-    interval=dukascopy_python.INTERVAL_HOUR_1,
-    start=datetime(2025, 7, 28),
+    interval=dukascopy_python.INTERVAL_DAY_1,
+    start=datetime(2022, 8, 28),
     end=datetime.now()
 )
 
-print("Dataframe recuperato da csv:")
-print(df.head())
-
-# -------------------
-# CALCOLO INDICATORI TECNICI
-# -------------------
-
-# MACD
-macd, macdsignal, macdhist = talib.MACD(df["Close"], fastperiod=10, slowperiod=26, signalperiod=9)
-df["MACD_Buy"] = (macd > macdsignal) & (macd.shift(1) <= macdsignal.shift(1))
-df["MACD_Sell"] = (macd < macdsignal) & (macd.shift(1) >= macdsignal.shift(1))
+# ===========================
+#  Indicatori tecnici
+# ===========================
+# Bollinger Bands
+upper, middle, lower = talib.BBANDS(df["Close"], timeperiod=20)
 
 # RSI
 rsi = talib.RSI(df["Close"], timeperiod=14)
+
+# MACD
+macd, macdsignal, macdhist = talib.MACD(df["Close"], fastperiod=12, slowperiod=26, signalperiod=9)
+
+# OBV
+obv = talib.OBV(df["Close"], df["Volume"])
+
+# VWAP (semplificato)
+df["TP"] = (df["High"] + df["Low"] + df["Close"]) / 3
+df["VWAP"] = (df["TP"] * df["Volume"]).cumsum() / df["Volume"].cumsum()
+
+# MFI
+mfi = talib.MFI(df["High"], df["Low"], df["Close"], df["Volume"], timeperiod=14)
+
+# Volume medio
+sma_volume = df["Volume"].rolling(20).mean()
+
+# ===========================
+#  Strategie di trading
+# ===========================
+# Bollinger Bands semplice
+df["BB_Buy"] = df["Close"] <= lower
+df["BB_Sell"] = df["Close"] >= upper
+
+# RSI
 df["RSI_Buy"] = rsi < 30
 df["RSI_Sell"] = rsi > 70
 
-# Bollinger Bands
-upper, middle, lower = talib.BBANDS(df["Close"], timeperiod=10, nbdevup=2.77, nbdevdn=2.5, matype=4)
-df["BB_Buy"] = df["Close"] < lower
-df["BB_Sell"] = df["Close"] > upper
+# MACD
+df["MACD_Buy"] = macd > macdsignal
+df["MACD_Sell"] = macd < macdsignal
 
-# Engulfing
-df["Engulfing_Buy"] = (df["Close"] > df["Open"]) & (df["Close"].shift(1) < df["Open"].shift(1))
-df["Engulfing_Sell"] = (df["Close"] < df["Open"]) & (df["Close"].shift(1) > df["Open"].shift(1))
+# Engulfing (pattern candele)
+engulfing = talib.CDLENGULFING(df["Open"], df["High"], df["Low"], df["Close"])
+df["Engulfing_Buy"] = engulfing > 0
+df["Engulfing_Sell"] = engulfing < 0
 
-# OBV
-df["OBV"] = talib.OBV(df["Close"], df["Volume"])
-obv_signal = df["OBV"].diff() > 0
-df["OBV_Buy"] = obv_signal & (obv_signal.shift(1) == False)
-df["OBV_Sell"] = ~obv_signal & (obv_signal.shift(1) == True)
+# OBV (trend up/down)
+df["OBV_Buy"] = obv > obv.shift(1)
+df["OBV_Sell"] = obv < obv.shift(1)
 
 # VWAP
-df["VWAP"] = (df["Close"] * df["Volume"]).cumsum() / df["Volume"].cumsum()
 df["VWAP_Buy"] = df["Close"] > df["VWAP"]
 df["VWAP_Sell"] = df["Close"] < df["VWAP"]
 
-# Money Flow Index (MFI)
-mfi = talib.MFI(df['High'], df['Low'], df['Close'], df['Volume'], timeperiod=14)
-df['MFI_Buy'] = mfi < 20
-df['MFI_Sell'] = mfi > 80
+# MFI
+df["MFI_Buy"] = mfi < 20
+df["MFI_Sell"] = mfi > 80
 
-# Volume Anomaly
-sma_volume = talib.SMA(df['Volume'], timeperiod=20)
-volume_spike = df['Volume'] > (sma_volume * 2.0)
-df['VolAnomaly_Buy'] = volume_spike & (df['Close'] > df['Open'])
-df['VolAnomaly_Sell'] = volume_spike & (df['Close'] < df['Open'])
+# Volume anomalo
+df["VolAnomaly_Buy"] = df["Volume"] > (sma_volume * 1.5)
+df["VolAnomaly_Sell"] = df["Volume"] < (sma_volume * 0.5)
 
+# --- NUOVA STRATEGIA: Bollinger + RSI + Volume ---
+df["BB_RSI_Buy"] = (df["Close"] <= lower) & (rsi < 30) #& (df["Volume"] > sma_volume)
+df["BB_RSI_Sell"] = (df["Close"] >= upper) & (rsi > 70) #& (df["Volume"] > sma_volume)
+
+# ===========================
+#  Funzione di simulazione
+# ===========================
 # -------------------
-# Breakout con conferma volumi + ADX
-# -------------------
-df["Donchian_High"] = df["High"].rolling(window=20).max()
-df["Donchian_Low"] = df["Low"].rolling(window=20).min()
-df["Vol_MA20"] = talib.SMA(df["Volume"], timeperiod=20)
-df["ADX"] = talib.ADX(df["High"], df["Low"], df["Close"], timeperiod=14)
-adx_threshold = 20
-
-df["Breakout_Up"] = (
-    (df["Close"] > df["Donchian_High"].shift(1)) &
-    (df["Volume"] > df["Vol_MA20"]) &
-    (df["ADX"] > adx_threshold)
-)
-
-df["Breakout_Down"] = (
-    (df["Close"] < df["Donchian_Low"].shift(1)) &
-    (df["Volume"] > df["Vol_MA20"]) &
-    (df["ADX"] > adx_threshold)
-)
-
-# -------------------
-# Funzione simulazione portafoglio
+# Funzione simulazione portafoglio (INVARIATA)
 # -------------------
 def simulate_portfolio(df, buy_col, sell_col, portfolio_col, stop_loss_pct=0.02, take_profit_pct=0.04):
+    """
+    Simula un portafoglio basato sui segnali di buy/sell.
+    
+    stop_loss_pct e take_profit_pct devono essere numeri decimali (es. 0.02 = 2%)
+    """
     cash = initial_cash
     position = 0.0
     entry_price = 0.0
@@ -103,20 +108,23 @@ def simulate_portfolio(df, buy_col, sell_col, portfolio_col, stop_loss_pct=0.02,
     for i in range(len(df)):
         price = df["Close"].iloc[i]
 
-        # Stop loss / take profit
+        # Controllo stop loss / take profit
         if position > 0:
-            if stop_loss_pct and price <= entry_price * (1 - stop_loss_pct):
+            if stop_loss_pct is not None and price <= entry_price * (1 - stop_loss_pct):
+                # Stop loss
                 exit_value = position * price * (1 - commission)
-                trades.append(exit_value - (position * entry_price))
+                trades.append(exit_value - (position * entry_price)) # Calcolo profitto/perdita
                 cash += exit_value
-                position = 0
-                entry_price = 0
-            elif take_profit_pct and price >= entry_price * (1 + take_profit_pct):
+                position = 0.0
+                entry_price = 0.0
+
+            elif take_profit_pct is not None and price >= entry_price * (1 + take_profit_pct):
+                # Take profit
                 exit_value = position * price * (1 - commission)
-                trades.append(exit_value - (position * entry_price))
+                trades.append(exit_value - (position * entry_price)) # Calcolo profitto/perdita
                 cash += exit_value
-                position = 0
-                entry_price = 0
+                position = 0.0
+                entry_price = 0.0
 
         # Acquisto
         if df[buy_col].iloc[i] and position == 0:
@@ -129,14 +137,18 @@ def simulate_portfolio(df, buy_col, sell_col, portfolio_col, stop_loss_pct=0.02,
         # Vendita
         elif df[sell_col].iloc[i] and position > 0:
             exit_value = position * price * (1 - commission)
-            trades.append(exit_value - (position * entry_price))
+            trades.append(exit_value - (position * entry_price)) # Calcolo profitto/perdita
             cash += exit_value
-            position = 0
-            entry_price = 0
+            position = 0.0
+            entry_price = 0.0
 
+        # Aggiorno il valore del portafoglio ad ogni riga
         portfolio.append(cash + position * price)
 
+    # Aggiorno il DataFrame
     df[portfolio_col] = portfolio
+
+    # Statistiche
     final_portfolio = cash + position * df["Close"].iloc[-1]
     roi = (final_portfolio - initial_cash) / initial_cash * 100
     num_trades = len(trades)
@@ -157,67 +169,58 @@ def simulate_portfolio(df, buy_col, sell_col, portfolio_col, stop_loss_pct=0.02,
         "Max Drawdown": max_drawdown
     }
 
-# -------------------
-# Simulazioni
-# -------------------
-reports = {
-    "MACD": simulate_portfolio(df, "MACD_Buy", "MACD_Sell", "Portfolio_MACD"),
-    "RSI": simulate_portfolio(df, "RSI_Buy", "RSI_Sell", "Portfolio_RSI"),
-    "Bollinger Bands": simulate_portfolio(df, "BB_Buy", "BB_Sell", "Portfolio_BB"),
-    "Engulfing": simulate_portfolio(df, "Engulfing_Buy", "Engulfing_Sell", "Portfolio_Eng"),
-    "OBV": simulate_portfolio(df, "OBV_Buy", "OBV_Sell", "Portfolio_OBV"),
-    "VWAP": simulate_portfolio(df, "VWAP_Buy", "VWAP_Sell", "Portfolio_VWAP"),
-    "MFI": simulate_portfolio(df, "MFI_Buy", "MFI_Sell", "Portfolio_MFI"),
-    "Volume Anomaly": simulate_portfolio(df, "VolAnomaly_Buy", "VolAnomaly_Sell", "Portfolio_VolAnomaly"),
-    "Breakout": simulate_portfolio(df, "Breakout_Up", "Breakout_Down", "Portfolio_Breakout")
-}
+# ===========================
+#  Backtest di tutte le strategie
+# ===========================
+report_bb = simulate_portfolio(df, "BB_Buy", "BB_Sell", "Portfolio_BB")
+report_rsi = simulate_portfolio(df, "RSI_Buy", "RSI_Sell", "Portfolio_RSI")
+report_macd = simulate_portfolio(df, "MACD_Buy", "MACD_Sell", "Portfolio_MACD")
+report_engulfing = simulate_portfolio(df, "Engulfing_Buy", "Engulfing_Sell", "Portfolio_Engulfing")
+report_obv = simulate_portfolio(df, "OBV_Buy", "OBV_Sell", "Portfolio_OBV")
+report_vwap = simulate_portfolio(df, "VWAP_Buy", "VWAP_Sell", "Portfolio_VWAP")
+report_mfi = simulate_portfolio(df, "MFI_Buy", "MFI_Sell", "Portfolio_MFI")
+report_vol = simulate_portfolio(df, "VolAnomaly_Buy", "VolAnomaly_Sell", "Portfolio_Vol")
+report_bb_rsi = simulate_portfolio(df, "BB_RSI_Buy", "BB_RSI_Sell", "Portfolio_BB_RSI")
 
-# -------------------
-# Stampa report
-# -------------------
-print("\n--- REPORT PERFORMANCE ---")
-for k, v in reports.items():
-    print(f"\n{k}:")
-    pprint.pprint(v)
+# ===========================
+#  Risultati
+# ===========================
+print("\n📊 RISULTATI STRATEGIE")
+print("Bollinger Bands:"); pprint.pprint(report_bb)
+print("\nRSI:"); pprint.pprint(report_rsi)
+print("\nMACD:"); pprint.pprint(report_macd)
+print("\nEngulfing:"); pprint.pprint(report_engulfing)
+print("\nOBV:"); pprint.pprint(report_obv)
+print("\nVWAP:"); pprint.pprint(report_vwap)
+print("\nMFI:"); pprint.pprint(report_mfi)
+print("\nVolume Anomaly:"); pprint.pprint(report_vol)
+print("\n✅ Bollinger + RSI + Volume:"); pprint.pprint(report_bb_rsi)
 
-# -------------------
-# PLOT mplfinance
-# -------------------
-buy_marker = df["Close"].where(df["BB_Buy"])
-sell_marker = df["Close"].where(df["BB_Sell"])
-
-buy_breakout = df["Close"].where(df["Breakout_Up"])
-sell_breakout = df["Close"].where(df["Breakout_Down"])
+# ===========================
+#  Grafico con segnali
+# ===========================
 
 apds = [
+    mpf.make_addplot(upper, color="red"),
+    mpf.make_addplot(middle, color="blue"),
+    mpf.make_addplot(lower, color="green"),
+    mpf.make_addplot(rsi, panel=1, color="purple", ylabel="RSI"),
     mpf.make_addplot(macd, panel=2, color="blue", ylabel="MACD"),
-    mpf.make_addplot(macdsignal, panel=2, color="orange"),
-    mpf.make_addplot(macdhist, panel=2, type="bar", color="gray"),
-    mpf.make_addplot(mfi, panel=3, color='purple', ylabel='MFI'),
-    mpf.make_addplot([80]*len(df), panel=3, color='r', linestyle='--'),
-    mpf.make_addplot([20]*len(df), panel=3, color='g', linestyle='--'),
-    mpf.make_addplot(df["VWAP"], color="purple", linestyle="--"),
+    mpf.make_addplot(macdsignal, panel=2, color="red"),
+    mpf.make_addplot(obv, panel=3, color="orange", ylabel="OBV"),
+    mpf.make_addplot(df["VWAP"], color="black"),
+    mpf.make_addplot(mfi, panel=4, color="brown", ylabel="MFI"),
 ]
 
-# Aggiungi segnali Bollinger
-if buy_marker.notna().any():
-    apds.append(mpf.make_addplot(buy_marker, type="scatter", markersize=100, marker="^", color="green"))
-if sell_marker.notna().any():
-    apds.append(mpf.make_addplot(sell_marker, type="scatter", markersize=100, marker="v", color="red"))
+# Marker per segnali Bollinger+RSI
 
-# Aggiungi segnali breakout
-if buy_breakout.notna().any():
-    apds.append(mpf.make_addplot(buy_breakout, type="scatter", markersize=100, marker="^", color="lime"))
-if sell_breakout.notna().any():
-    apds.append(mpf.make_addplot(sell_breakout, type="scatter", markersize=100, marker="v", color="magenta"))
+bb_rsi_buy_marker = df["Close"].where(df["BB_RSI_Buy"])
+bb_rsi_sell_marker = df["Close"].where(df["BB_RSI_Sell"])
 
-mpf.plot(
-    df,
-    type="candle",
-    volume=True,
-    addplot=apds,
-    style="yahoo",
-    title=f"{instrument} Signals & Breakouts",
-    show_nontrading=False,
-    panel_ratios=(6, 1, 2, 2)
-)
+if bb_rsi_buy_marker.notna().any():
+    apds.append(mpf.make_addplot(bb_rsi_buy_marker, type="scatter", markersize=80, marker="^", color="lime"))
+
+if bb_rsi_sell_marker.notna().any():
+    apds.append(mpf.make_addplot(bb_rsi_sell_marker, type="scatter", markersize=80, marker="v", color="darkred"))
+
+mpf.plot(df, type="candle", style="yahoo", addplot=apds, volume=True, title=f"{instrument} - Strategie Trading")
