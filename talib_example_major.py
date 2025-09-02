@@ -6,9 +6,7 @@ from dukascopy_python.instruments import INSTRUMENT_US_AAPL_US_USD
 import dukascopy_python
 import pprint
 from datetime import datetime
-# ===========================
-#  Download dati
-# ===========================
+import numpy as np
 
 instrument = INSTRUMENT_US_AAPL_US_USD
 commission = 0.0002  # 0,02%
@@ -22,45 +20,106 @@ df = DataDownloader.download_data_to_dataframe(
     end=datetime.now()
 )
 
-# ===========================
-#  Indicatori tecnici
-# ===========================
-# Bollinger Bands
-upper, middle, lower = talib.BBANDS(df["Close"], timeperiod=20)
+#print("Dataframe recuperato da csv:")
+#print(df.head())
 
-# RSI
+# -------------------
+# CALCOLO INDICATORI TECNICI
+# -------------------
+
+import talib
+import pandas as pd
+
+# --- MACD ---
+
+import talib
+import pandas as pd
+import numpy as np
+from tqdm import tqdm
+
+best_score = -np.inf
+best_params = None
+
+# Esempio di range dei periodi
+fast_range = np.arange(5, 15, 1)
+mid_range  = np.arange(10, 30, 1)
+slow_range = np.arange(20, 100, 1)
+
+for f in fast_range:
+    for m in mid_range:
+        for s in tqdm(slow_range, desc=f"Fast {f}, Mid {m}"):
+            if not (f < m < s):
+                continue  # vincolo ordine EMA
+            
+            ema_fast = talib.EMA(df["Close"], timeperiod=f)
+            ema_mid  = talib.EMA(df["Close"], timeperiod=m)
+            ema_slow = talib.EMA(df["Close"], timeperiod=s)
+
+            # Crossover: condizione di acquisto e vendita
+            buy  = (ema_fast > ema_mid) & (ema_mid > ema_slow) & ((ema_fast.shift(1) <= ema_mid.shift(1)) | (ema_mid.shift(1) <= ema_slow.shift(1)))
+            sell = (ema_fast < ema_mid) & (ema_mid < ema_slow) & ((ema_fast.shift(1) >= ema_mid.shift(1)) | (ema_mid.shift(1) >= ema_slow.shift(1)))
+
+            # Strategia semplificata
+            position = 0
+            pnl = []
+            for i in range(len(df)):
+                if buy[i] and position == 0:
+                    entry = df["Close"].iloc[i]
+                    position = 1
+                elif sell[i] and position == 1:
+                    exit_price = df["Close"].iloc[i]
+                    pnl.append(exit_price - entry)
+                    position = 0
+
+            score = np.mean(pnl) if pnl else -9999
+
+            if score > best_score:
+                best_score = score
+                best_params = (f, m, s)
+
+print("Migliori parametri EMA (fast, mid, slow):", best_params, "Score:", best_score)
+
+
+macd, macdsignal, macdhist = talib.MACD(df["Close"], fastperiod=10, slowperiod=26, signalperiod=9)
+
+df["MACD"] = macd
+df["MACD_signal"] = macdsignal
+df["MACD_hist"] = macdhist
+
+df["MACD_Buy"] = (macd > macdsignal) & (macd.shift(1) <= macdsignal.shift(1))
+df["MACD_Sell"] = (macd < macdsignal) & (macd.shift(1) >= macdsignal.shift(1))
+
+# --- EMA ---
+df["EMA_Fast"] = talib.EMA(df["Close"], timeperiod=10)
+df["EMA_Mid"]  = talib.EMA(df["Close"], timeperiod=20)
+df["EMA_Slow"] = talib.EMA(df["Close"], timeperiod=26)
+
+# Normalizzazione rispetto al prezzo
+df["EMA_Fast_norm"] = df["EMA_Fast"] / df["Close"]
+df["EMA_Mid_norm"]  = df["EMA_Mid"]  / df["Close"]
+df["EMA_Slow_norm"] = df["EMA_Slow"] / df["Close"]
+
+df["EMA_cross"] = (df["EMA_Fast"] > df["EMA_Mid"]).astype(int)
+df["EMA10_slope_pct"] = df["EMA_Fast"].pct_change()
+
+# --- RSI ---
 rsi = talib.RSI(df["Close"], timeperiod=14)
-
-# MACD
-macd, macdsignal, macdhist = talib.MACD(df["Close"], fastperiod=12, slowperiod=26, signalperiod=9)
-
-# OBV
-obv = talib.OBV(df["Close"], df["Volume"])
-
-# VWAP (semplificato)
-df["TP"] = (df["High"] + df["Low"] + df["Close"]) / 3
-df["VWAP"] = (df["TP"] * df["Volume"]).cumsum() / df["Volume"].cumsum()
-
-# MFI
-mfi = talib.MFI(df["High"], df["Low"], df["Close"], df["Volume"], timeperiod=14)
-
-# Volume medio
-sma_volume = df["Volume"].rolling(20).mean()
-
-# ===========================
-#  Strategie di trading
-# ===========================
-# Bollinger Bands semplice
-df["BB_Buy"] = df["Close"] <= lower
-df["BB_Sell"] = df["Close"] >= upper
-
-# RSI
+df["RSI"] = rsi
+df["RSI_norm"] = rsi / 100
 df["RSI_Buy"] = rsi < 30
 df["RSI_Sell"] = rsi > 70
 
-# MACD
-df["MACD_Buy"] = macd > macdsignal
-df["MACD_Sell"] = macd < macdsignal
+# --- Bollinger Bands ---
+upper, middle, lower = talib.BBANDS(df["Close"], timeperiod=10, nbdevup=2.77, nbdevdn=2.5, matype=4)
+
+df["BB_Width"] = (upper - lower) / middle
+df["BB_Percent_b"] = (df["Close"] - lower) / (upper - lower)
+df["BB_Breakout_up"] = (df["Close"] > upper).astype(int)
+df["BB_Breakout_down"] = (df["Close"] < lower).astype(int)
+
+df["BB_Buy"] = (df["Close"] < lower).astype(int)
+df["BB_Sell"] = (df["Close"] > upper).astype(int)
+
 
 # Engulfing (pattern candele)
 engulfing = talib.CDLENGULFING(df["Open"], df["High"], df["Low"], df["Close"])
@@ -83,16 +142,45 @@ df["MFI_Sell"] = mfi > 80
 df["VolAnomaly_Buy"] = df["Volume"] > (sma_volume * 1.5)
 df["VolAnomaly_Sell"] = df["Volume"] < (sma_volume * 0.5)
 
-# --- NUOVA STRATEGIA: Bollinger + RSI + Volume ---
-df["BB_RSI_Buy"] = (df["Close"] <= lower) & (rsi < 30) #& (df["Volume"] > sma_volume)
-df["BB_RSI_Sell"] = (df["Close"] >= upper) & (rsi > 70) #& (df["Volume"] > sma_volume)
+# -------------------
+# Breakout con conferma volumi + ADX
+# -------------------
+df["Donchian_High"] = df["High"].rolling(window=20).max()
+df["Donchian_Low"] = df["Low"].rolling(window=20).min()
+df["Vol_MA20"] = talib.SMA(df["Volume"], timeperiod=20)
+df["ADX"] = talib.ADX(df["High"], df["Low"], df["Close"], timeperiod=14)
+adx_threshold = 20
 
-# ===========================
-#  Funzione di simulazione
-# ===========================
+df["Breakout_Up"] = (
+    (df["Close"] > df["Donchian_High"].shift(1)) &
+    (df["Volume"] > df["Vol_MA20"]) &
+    (df["ADX"] > adx_threshold)
+)
+
+df["Breakout_Down"] = (
+    (df["Close"] < df["Donchian_Low"].shift(1)) &
+    (df["Volume"] > df["Vol_MA20"]) &
+    (df["ADX"] > adx_threshold)
+)
+
+
+# -------------------
+# Target per Machine Learning
+# -------------------
+
+horizon = 3  # numero di barre future da considerare
+df[f"Return_{horizon}"] = (df["Close"].shift(-horizon) / df["Close"] - 1) * 100
+
+df[f"Target_{horizon}"] = (df[f"Return_{horizon}"] > 0).astype(bool)
+
+print(df)
+
+exit()
+
 # -------------------
 # Funzione simulazione portafoglio (INVARIATA)
 # -------------------
+
 def simulate_portfolio(df, buy_col, sell_col, portfolio_col, stop_loss_pct=0.02, take_profit_pct=0.04):
     """
     Simula un portafoglio basato sui segnali di buy/sell.
