@@ -14,9 +14,9 @@ class DataPreprocessor:
         best_params = None
 
         # Esempio di range dei periodi
-        fast_range = np.arange(5, 50, 1)
-        mid_range  = np.arange(10, 100, 1)
-        slow_range = np.arange(20, 200, 1)
+        fast_range = np.arange(5, 100, 1)
+        mid_range  = np.arange(10, 200, 1)
+        slow_range = np.arange(15, 300, 1)
 
         total = len(fast_range) * len(mid_range) * len(slow_range)
         
@@ -24,8 +24,9 @@ class DataPreprocessor:
         best_params = None
         pbar = tqdm(total=total, desc="Ottimizzazione MACD")
 
-        for fast, slow, signal in tqdm(itertools.product(range(5,50), range(10,100), range(20,200))):
+        for fast, slow, signal in tqdm(itertools.product(range(5,100), range(10,200), range(15,300))):
             if fast >= slow:  # condizione logica, fast deve essere < slow
+                pbar.update(1)
                 continue
             macd, signal_line, hist = talib.MACD(self.df_final["Close"], fastperiod=fast, slowperiod=slow, signalperiod=signal)
             
@@ -41,9 +42,11 @@ class DataPreprocessor:
             
             pbar.update(1)
 
-        params = {"EMA_Fast_length": best_params[0], "EMA_Mid_length": best_params[1], "EMA_Slow_length": best_params[2]}
-        
-        print("Migliori parametri EMA (fast, mid, slow):", best_params, "Score:", best_score)
+        self.df_final["MACD_Fast_length"] = best_params[0]
+        self.df_final["MACD_Slow_length"] = best_params[1]
+        self.df_final["MACD_Signal_length"] = best_params[2]
+
+        print("Migliori parametri MACD (fast, slow, signal):", best_params, "Score:", best_score)
         
         exit()
 
