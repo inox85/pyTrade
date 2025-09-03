@@ -45,13 +45,50 @@ class DataPreprocessor:
         
         print("Migliori parametri EMA (fast, mid, slow):", best_params, "Score:", best_score)
         
-        exit()
+
+    def optimize_bbands(self):
+        best_score = -np.inf
+        best_params = None
+
+        # Range dei parametri da ottimizzare
+        timeperiod_range = np.arange(5, 30, 1)     # lunghezza media mobile
+        nbdevup_range = np.arange(1, 4, 0.05)     # deviazione standard superiore
+        nbdevdn_range = np.arange(1, 4, 0.05)     # deviazione standard inferiore
+
+        total = len(timeperiod_range) * len(nbdevup_range) * len(nbdevdn_range)
+        pbar = tqdm(total=total, desc="Ottimizzazione BBANDS")
+
+        for tp, up, dn in itertools.product(timeperiod_range, nbdevup_range, nbdevdn_range):
+            # Calcolo BBANDS
+            upper, middle, lower = talib.BBANDS(self.df_final["Close"], timeperiod=tp, nbdevup=up, nbdevdn=dn, matype=0)
+
+            # Semplice strategia: long se prezzo < lower, short se prezzo > upper
+            pos = np.where(self.df_final["Close"] < lower, 1, np.where(self.df_final["Close"] > upper, -1, 0))
+
+            # Calcolo dei ritorni giornalieri ponderati dalla posizione
+            returns = self.df_final["Close"].pct_change().shift(-1) * pos  # shift(-1) per ritorno futuro
+
+            # Score = somma dei ritorni cumulati (puoi sostituire con Sharpe ratio)
+            score = np.nansum(returns)
+
+            if score > best_score:
+                best_score = score
+                best_params = (tp, up, dn)
+
+            pbar.update(1)
+
+        pbar.close()
+        params = {"timeperiod": best_params[0], "nbdevup": best_params[1], "nbdevdn": best_params[2]}
+        
+        print("Migliori parametri BBANDS:", best_params, "Score:", best_score)
+        return params, best_score
 
     def genrate_dataset(self):
 
-        macd_params = self.optimize_macd()
+        #macd_params = self.optimize_macd()
 
-        macd, macdsignal, macdhist = talib.MACD(self.df_final["Close"], fastperiod=macd_params["EMA_Slow_length"], slowperiod=macd_params["EMA_Mid_length"], signalperiod=macd_params["EMA_Fast_length"])
+        #macd, macdsignal, macdhist = talib.MACD(self.df_final["Close"], fastperiod=macd_params["EMA_Slow_length"], slowperiod=macd_params["EMA_Mid_length"], signalperiod=macd_params["EMA_Fast_length"])
+        macd, macdsignal, macdhist = talib.MACD(self.df_final["Close"], fastperiod=5, slowperiod=14, signalperiod=28)
 
         self.df_final["MACD"] = macd
         self.df_final["MACD_signal"] = macdsignal
@@ -60,24 +97,49 @@ class DataPreprocessor:
         self.df_final["MACD_Buy"] = (macd > macdsignal) & (macd.shift(1) <= macdsignal.shift(1))
         self.df_final["MACD_Sell"] = (macd < macdsignal) & (macd.shift(1) >= macdsignal.shift(1))
 
-        # --- EMA ---
-        self.df_final["EMA_5"] = talib.EMA(self.df_final["Close"], timeperiod=5)
-        self.df_final["EMA_20"]  = talib.EMA(self.df_final["Close"], timeperiod=20)
-        self.df_final["EMA_50"] = talib.EMA(self.df_final["Close"], timeperiod=50)
-        self.df_final["EMA_100"] = talib.EMA(self.df_final["Close"], timeperiod=100)
-        self.df_final["EMA_200"] = talib.EMA(self.df_final["Close"], timeperiod=200)
+        periods = [5, 10, 20, 50, 100]
 
-        # Normalizzazione rispetto al prezzo
-        self.df_final["EMA_5_norm"] = self.df_final["EMA_5_norm"] / self.df_final["Close"]
-        self.df_final["EMA_20_norm"]  = self.df_final["EMA_20_norm"]  / self.df_final["Close"]
-        self.df_final["EMA_50_norm"] = self.df_final["EMA_50_norm"] / self.df_final["Close"]
-        self.df_final["EMA_100_norm"]  = self.df_final["EMA_100_norm"]  / self.df_final["Close"]
-        self.df_final["EMA_200_norm"] = self.df_final["EMA_200_norm"] / self.df_final["Close"]
+        # =========================================
+        # 3) Calcolo SMA e EMA
+        # =========================================
+        for p in periods:
+            self.df_final[f"SMA_{p}"] = self.df_final["Close"].rolling(window=p).mean()
+            self.df_final[f"EMA_{p}"] = self.df_final["Close"].ewm(span=p, adjust=False).mean()
 
-        self.df_final["EMA_cross"] = (self.df_final["EMA_5_norm"] > self.df_final["EMA_50_norm"]).astype(int)
-        self.df_final["EMA10" \
-        "_slope_pct"] = self.df_final["EMA_10_norm"].pct_change()
-        self.df_final["EMA20_slope_pct"] = self.df_final["EMA_20_norm"].pct_change()
+        # =========================================
+        # 4) Calcolo slope percentuale
+        # =========================================
+        window_slope = 5  # numero di periodi per calcolare la pendenza
+
+        # slope percentuale sul prezzo
+        self.df_final["Close_slope_pct"] = (self.df_final["Close"] - self.df_final["Close"].shift(window_slope)) / self.df_final["Close"].shift(window_slope)
+
+        # slope percentuale su tutte le medie
+        ma_columns = [col for col in self.df_final.columns if col.startswith(("SMA", "EMA"))]
+        for col in ma_columns:
+            self.df_final[f"{col}_slope_pct"] = (self.df_final[col] - self.df_final[col].shift(window_slope)) / self.df_final[col].shift(window_slope)
+
+        # =========================================
+        # 5) Funzioni per incroci
+        # =========================================
+        def crossover(series1, series2):
+            return (series1 > series2) & (series1.shift(1) <= series2.shift(1))
+
+        def crossunder(series1, series2):
+            return (series1 < series2) & (series1.shift(1) >= series2.shift(1))
+
+        # =========================================
+        # 6) Genera incroci per tutte le coppie di medie
+        # =========================================
+        new_cols = {}
+        for i in range(len(ma_columns)):
+            for j in range(i+1, len(ma_columns)):
+                col1, col2 = ma_columns[i], ma_columns[j]
+                new_cols[f"{col1}_x_{col2}_UP"] = crossover(self.df_final[col1], self.df_final[col2])
+                new_cols[f"{col1}_x_{col2}_DOWN"] = crossunder(self.df_final[col1], self.df_final[col2])
+
+        # Concateno tutto insieme in una volta
+        self.df_final = pd.concat([self.df_final, pd.DataFrame(new_cols, index=self.df_final.index)], axis=1)
 
         # --- RSI ---
         rsi = talib.RSI(self.df_final["Close"], timeperiod=14)
@@ -86,6 +148,8 @@ class DataPreprocessor:
         self.df_final["RSI_Buy"] = rsi < 30
         self.df_final["RSI_Sell"] = rsi > 70
 
+        self.optimize_bbands()
+        exit()
         # --- Bollinger Bands ---
         upper, middle, lower = talib.BBANDS(self.df_final["Close"], timeperiod=10, nbdevup=2.77, nbdevdn=2.5, matype=4)
 
@@ -144,15 +208,11 @@ class DataPreprocessor:
             (self.df_final["ADX"] > adx_threshold)
         )
 
-        pd.set_option("display.max_rows", None)
-        pd.set_option("display.max_columns", None)
-
-        print(self.df_final)
 
     def generate_targets(self, front_up_candles = 5, th_pct = 0.01):
         # Parametri
-        N = front_up_candles # numero di candele future
-        threshold_pct = th_pct  # soglia percentuale minima (es. 1%)
+        N = front_up_candles
+        threshold_pct = th_pct
 
         # Calcolo ritorno futuro
         self.df_final['future_return'] = self.df_final['Close'].shift(-N) / self.df_final['Close'] - 1
@@ -164,10 +224,26 @@ class DataPreprocessor:
             elif r <= -threshold_pct:
                 return -1   # ribasso significativo
             else:
-                return 0    # nessun movimento significativo
+                return 0
 
         self.df_final['Target'] = self.df_final['future_return'].apply(generate_cautious_target)
 
-        # Controllo distribuzione target
-        print(self.df_final['Target'].value_counts())
-        print(self.df_final[['Close','future_return','Target']].tail(10))
+        # Calcolo profitto percentuale basato sul target
+        self.df_final['Profit_pct'] = np.where(
+            self.df_final['Target'] == 1,
+            (self.df_final['Close'].shift(-N) - self.df_final['Close']) / self.df_final['Close'],  # long
+            np.where(
+                self.df_final['Target'] == -1,
+                (self.df_final['Close'] - self.df_final['Close'].shift(-N)) / self.df_final['Close'],  # short
+                0
+            )
+        )
+
+        # Stampiamo DataFrame completo
+        pd.set_option("display.max_rows", None)
+        pd.set_option("display.max_columns", None)
+        print(self.df_final)
+
+        # Profitto percentuale totale (somma dei singoli trade)
+        total_profit_pct = self.df_final['Profit_pct'].sum()
+        print(f"\nProfitto teorico totale (%) cumulato: {total_profit_pct*100:.2f}%")

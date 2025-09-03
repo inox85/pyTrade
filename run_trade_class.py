@@ -1,10 +1,10 @@
 from data_preparation import DataPreprocessor
 from data_downloader import DataDownloader
-from dukascopy_python.instruments import INSTRUMENT_US_AAPL_US_USD
+from dukascopy_python.instruments import INSTRUMENT_US_AAPL_US_USD, INSTRUMENT_US_PLTR_US_USD
 import dukascopy_python 
 from datetime import datetime
 
-instrument = INSTRUMENT_US_AAPL_US_USD
+instrument = INSTRUMENT_US_PLTR_US_USD
 
 def main():
     df_history = DataDownloader.download_data_to_dataframe(
@@ -15,6 +15,7 @@ def main():
     )
     prepocessor = DataPreprocessor(df_history)
     prepocessor.genrate_dataset()
+    prepocessor.generate_targets(front_up_candles=5, th_pct=0.01)
 
 
 if __name__ == "__main__":
