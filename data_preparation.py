@@ -9,7 +9,7 @@ class DataPreprocessor:
         self.df_origin = df
         self.df_final = df.copy()
 
-    def optimize_macd_multi_horizon(self, 
+    def optimize_macd(self, 
                             fast_range=(5, 20), 
                             slow_range=(26, 100), 
                             signal_range=(5, 20), 
@@ -195,18 +195,14 @@ class DataPreprocessor:
         print("Migliori parametri BBANDS:", params)
         return params
     
-    def optimize_volume_adx(self, horizons=[1,3,5], adx_range=(10,40), vol_mult_range=(1.5,3.0,0.1), metric="cumulative"):
+    def optimize_volume_adx(self, horizons=[1,3,5],
+                        vol_ma_range=range(10,51,5),
+                        adx_period_range=range(10,21,2),
+                        adx_threshold_range=range(10,41,2),
+                        vol_mult_range=(1.5,3.0,0.1),
+                        metric="cumulative"):
         """
-        Ottimizza Volume Anomaly + ADX su più orizzonti temporali.
-        
-        Parametri:
-            horizons: lista di int -> orizzonti temporali in candele per valutazione
-            adx_range: tuple -> (min, max) range valori soglia ADX
-            vol_mult_range: tuple -> (min, max, step) moltiplicatore per volume medio
-            metric: str -> "cumulative", "sharpe", "accuracy"
-        
-        Ritorna:
-            dict con i migliori parametri e score
+        Ottimizza Volume Anomaly + ADX su più orizzonti temporali includendo tutti i parametri.
         """
         import numpy as np
         import talib
@@ -222,21 +218,23 @@ class DataPreprocessor:
         low = self.df_final["Low"]
         volume = self.df_final["Volume"]
 
-        # Precalcolo indicatori
-        self.df_final["Vol_MA20"] = talib.SMA(volume, timeperiod=20)
-        self.df_final["ADX"] = talib.ADX(high, low, close, timeperiod=14)
+        vol_multipliers = np.arange(vol_mult_range[0], vol_mult_range[1]+vol_mult_range[2], vol_mult_range[2])
 
-        adx_thresholds = range(adx_range[0], adx_range[1]+1, 2)
-        vol_multipliers = np.arange(vol_mult_range[0], vol_mult_range[1], vol_mult_range[2])
-
-        total = len(adx_thresholds) * len(vol_multipliers)
+        total = len(vol_ma_range) * len(adx_period_range) * len(adx_threshold_range) * len(vol_multipliers)
         pbar = tqdm(total=total, desc="Ottimizzazione VolAnomaly+ADX")
 
-        for adx_thr, vm in itertools.product(adx_thresholds, vol_multipliers):
-            # Segnali Volume Anomaly
-            volume_spike = volume > (self.df_final["Vol_MA20"] * vm)
-            buy_signal = volume_spike & (close > open_) & (self.df_final["ADX"] > adx_thr)
-            sell_signal = volume_spike & (close < open_) & (self.df_final["ADX"] > adx_thr)
+        for vol_ma, adx_period, adx_thr, vm in itertools.product(vol_ma_range,
+                                                                adx_period_range,
+                                                                adx_threshold_range,
+                                                                vol_multipliers):
+            # --- Calcolo indicatori ---
+            Vol_MA = talib.SMA(volume, timeperiod=vol_ma)
+            ADX_val = talib.ADX(high, low, close, timeperiod=adx_period)
+
+            # --- Segnali ---
+            volume_spike = volume > (Vol_MA * vm)
+            buy_signal = volume_spike & (close > open_) & (ADX_val > adx_thr)
+            sell_signal = volume_spike & (close < open_) & (ADX_val > adx_thr)
 
             pos = np.where(buy_signal, 1, np.where(sell_signal, -1, 0))
 
@@ -258,21 +256,22 @@ class DataPreprocessor:
                     raise ValueError("Metric deve essere 'cumulative', 'sharpe' o 'accuracy'")
                 horizon_scores.append(score_h)
 
-            # Media score su tutti gli orizzonti
             score = np.mean(horizon_scores)
 
             if score > best_score:
                 best_score = score
-                best_params = (adx_thr, vm)
+                best_params = (vol_ma, adx_period, adx_thr, vm)
 
             pbar.update(1)
 
         pbar.close()
 
         result = {
-            "Best_ADX_Threshold": round(float(best_params[0]), 2),
-            "Best_Volume_Multiplier": round(float(best_params[1]),2),
-            "Best_Score": round(float(best_score),6),
+            "Best_Vol_MA": best_params[0],
+            "Best_ADX_Timeperiod": best_params[1],
+            "Best_ADX_Threshold": best_params[2],
+            "Best_Volume_Multiplier": round(float(best_params[3], 2)),
+            "Best_Score": round(float(best_score), 6),
             "Metric": metric,
             "Horizons": horizons
         }
@@ -281,12 +280,13 @@ class DataPreprocessor:
         return result
 
 
+
     def generate_dataset(self):
 
         volume_params = self.optimize_volume_adx()
         mfi_params = self.optimize_mfi()
         bb_params = self.optimize_bbands()
-        macd_params = self.optimize_macd_multi_horizon()
+        macd_params = self.optimize_macd()
 
         macd, macdsignal, macdhist = talib.MACD(self.df_final["Close"], fastperiod=macd_params["MACD_Fast_length"], slowperiod=macd_params["MACD_Slow_length"], signalperiod=macd_params["MACD_Signal_length"])
 

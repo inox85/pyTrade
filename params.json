@@ -5,11 +5,22 @@
         "slow": 33,
         "signal": 9
     },
-    "bb": 
+    "bBands": 
     {
         "timeperiod": 5.0,
         "nbdevup": 2.0,
         "nbdevdn": 1.8,
         "matype": 0
+    },
+    "mfi": 
+    {
+        "timeperiod": 5
+    },
+    "volAnomaly_Adx":
+    {
+        "vol_ma": 20,
+        "adx_timeperiod": 14,
+        "adx_threshold": 25,
+        "volume_multiplier": 1.5
     }
 }
