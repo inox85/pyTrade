@@ -134,7 +134,7 @@ class DataPreprocessor:
         pbar.close()
 
         params = {
-            "MFI_TimePeriod": best_params,
+            "MFI_TimePeriod": int(best_params),
             "MFI_Best_Score": round(float(best_score), 6)
         }
 
@@ -270,8 +270,8 @@ class DataPreprocessor:
         pbar.close()
 
         result = {
-            "Best_ADX_Threshold": best_params[0],
-            "Best_Volume_Multiplier": round(best_params[1],2),
+            "Best_ADX_Threshold": round(float(best_params[0]), 2),
+            "Best_Volume_Multiplier": round(float(best_params[1]),2),
             "Best_Score": round(float(best_score),6),
             "Metric": metric,
             "Horizons": horizons
