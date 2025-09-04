@@ -1,7 +1,15 @@
 {
-    "macd": {
-        "fast": 11,
-        "slow": 22,
-        "signal": 28
+    "macd": 
+    {
+        "fast": 6,
+        "slow": 33,
+        "signal": 9
+    },
+    "bb": 
+    {
+        "timeperiod": 5.0,
+        "nbdevup": 2.0,
+        "nbdevdn": 1.8,
+        "matype": 0
     }
 }

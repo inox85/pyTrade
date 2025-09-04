@@ -9,89 +9,288 @@ class DataPreprocessor:
         self.df_origin = df
         self.df_final = df.copy()
 
-    def optimize_macd(self):        
+    def optimize_macd_multi_horizon(self, 
+                            fast_range=(5, 20), 
+                            slow_range=(26, 100), 
+                            signal_range=(5, 20), 
+                            horizons=[1, 3, 5],
+                            weights=None):
+        """
+        Ottimizza i parametri del MACD con una grid search su più orizzonti temporali.
+
+        Parametri:
+        ----------
+        horizons : list[int]
+            Lista di orizzonti futuri (in numero di candele).
+        weights : list[float] or None
+            Pesi per ogni orizzonte (somma = 1). Se None -> pesi uniformi.
+
+        Ritorna:
+        --------
+        dict con parametri migliori e score.
+        """
+        if weights is None:
+            weights = [1/len(horizons)] * len(horizons)
+
         best_score = -np.inf
         best_params = None
 
-        # Esempio di range dei periodi
-        fast_range = np.arange(5, 100, 1)
-        mid_range  = np.arange(10, 200, 1)
-        slow_range = np.arange(15, 300, 1)
+        grid = itertools.product(
+            range(fast_range[0], fast_range[1]),
+            range(slow_range[0], slow_range[1]),
+            range(signal_range[0], signal_range[1])
+        )
 
-        total = len(fast_range) * len(mid_range) * len(slow_range)
-        
-        best_score = -1
-        best_params = None
-        pbar = tqdm(total=total, desc="Ottimizzazione MACD")
+        total = (fast_range[1]-fast_range[0]) * (slow_range[1]-slow_range[0]) * (signal_range[1]-signal_range[0])
+        pbar = tqdm(total=total, desc="Ottimizzazione MACD multi-horizon")
 
-        for fast, slow, signal in tqdm(itertools.product(range(5,100), range(10,200), range(15,300))):
-            if fast >= slow:  # condizione logica, fast deve essere < slow
+        for fast, slow, signal in grid:
+            if fast >= slow:
                 pbar.update(1)
                 continue
-            macd, signal_line, hist = talib.MACD(self.df_final["Close"], fastperiod=fast, slowperiod=slow, signalperiod=signal)
-            
-            # esempio di regola: quando hist > 0 siamo long, altrimenti flat
-            self.df_final["pos"] = (hist > 0).astype(int)
-            self.df_final["returns"] = self.df_final["Close"].pct_change() * self.df_final["pos"].shift()
-            
-            score = self.df_final["returns"].sum()  # qui puoi usare anche Sharpe ratio ecc.
-            
+
+            macd, signal_line, hist = talib.MACD(
+                self.df_final["Close"],
+                fastperiod=fast,
+                slowperiod=slow,
+                signalperiod=signal
+            )
+
+            pos = (hist > 0).astype(int)
+
+            # valutazione su più orizzonti
+            horizon_scores = []
+            for h, w in zip(horizons, weights):
+                future_returns = self.df_final["Close"].pct_change(h).shift(-h)
+                strat_returns = future_returns * pos
+
+                total_ret = strat_returns.sum()
+                volatility = strat_returns.std() if strat_returns.std() != 0 else 1
+                sharpe_like = total_ret / volatility
+
+                horizon_scores.append(w * sharpe_like)
+
+            score = sum(horizon_scores)
+
             if score > best_score:
                 best_score = score
                 best_params = (fast, slow, signal)
-            
+
             pbar.update(1)
 
-        self.df_final["MACD_Fast_length"] = best_params[0]
-        self.df_final["MACD_Slow_length"] = best_params[1]
-        self.df_final["MACD_Signal_length"] = best_params[2]
+        pbar.close()
 
-        print("Migliori parametri MACD (fast, slow, signal):", best_params, "Score:", best_score)
-        
 
-    def optimize_bbands(self):
+
+        params =  { 
+            "MACD_Fast_length": best_params[0],
+            "MACD_Slow_length": best_params[1],
+            "MACD_Signal_length": best_params[2],
+            "MACD_Score_length": float(best_score)
+        }
+
+        print("Migliori parametri MACD:", params)
+
+        return params
+
+    def optimize_mfi(self, horizons=[1, 3, 5]):
+        best_score = -np.inf
+        best_params = None
+
+        # Range del parametro periodo MFI
+        timeperiod_range = np.arange(5, 50, 1)
+
+        total = len(timeperiod_range)
+        pbar = tqdm(total=total, desc="Ottimizzazione MFI")
+
+        close = self.df_final["Close"]
+        high = self.df_final["High"]
+        low = self.df_final["Low"]
+        volume = self.df_final["Volume"]
+
+        for tp in timeperiod_range:
+            # Calcolo MFI
+            mfi = talib.MFI(high, low, close, volume, timeperiod=tp)
+
+            # Strategia: long se MFI < 20, short se MFI > 80
+            pos = np.where(mfi < 20, 1, np.where(mfi > 80, -1, 0))
+
+            # --- Score su più orizzonti temporali ---
+            horizon_scores = []
+            for h in horizons:
+                future_returns = close.pct_change(h).shift(-h) * pos
+                score_h = np.nanmean(future_returns)  # media rendimento futuro
+                horizon_scores.append(score_h)
+
+            # Score finale: media su tutti gli orizzonti
+            score = np.mean(horizon_scores)
+
+            if score > best_score:
+                best_score = score
+                best_params = tp
+
+            pbar.update(1)
+
+        pbar.close()
+
+        params = {
+            "MFI_TimePeriod": best_params,
+            "MFI_Best_Score": round(float(best_score), 6)
+        }
+
+        print("Migliori parametri MFI:", params)
+        return params
+
+
+    def optimize_bbands(self, horizons=[1, 3, 5]):
         best_score = -np.inf
         best_params = None
 
         # Range dei parametri da ottimizzare
         timeperiod_range = np.arange(5, 30, 1)     # lunghezza media mobile
-        nbdevup_range = np.arange(1, 4, 0.05)     # deviazione standard superiore
-        nbdevdn_range = np.arange(1, 4, 0.05)     # deviazione standard inferiore
+        nbdevup_range = np.arange(1, 4, 0.1)       # deviazione standard superiore
+        nbdevdn_range = np.arange(1, 4, 0.1)       # deviazione standard inferiore
+        matype_range = [0, 1, 2, 3, 4, 5, 6, 7, 8]                   # tipo di media mobile (limitato per performance)
 
-        total = len(timeperiod_range) * len(nbdevup_range) * len(nbdevdn_range)
+        total = len(timeperiod_range) * len(nbdevup_range) * len(nbdevdn_range) * len(matype_range)
         pbar = tqdm(total=total, desc="Ottimizzazione BBANDS")
 
-        for tp, up, dn in itertools.product(timeperiod_range, nbdevup_range, nbdevdn_range):
+        close = self.df_final["Close"]
+
+        for tp, up, dn, matype in itertools.product(timeperiod_range, nbdevup_range, nbdevdn_range, matype_range):
             # Calcolo BBANDS
-            upper, middle, lower = talib.BBANDS(self.df_final["Close"], timeperiod=tp, nbdevup=up, nbdevdn=dn, matype=0)
+            upper, middle, lower = talib.BBANDS(close, timeperiod=tp, nbdevup=up, nbdevdn=dn, matype=matype)
 
-            # Semplice strategia: long se prezzo < lower, short se prezzo > upper
-            pos = np.where(self.df_final["Close"] < lower, 1, np.where(self.df_final["Close"] > upper, -1, 0))
+            # Strategia: long se prezzo < lower, short se prezzo > upper
+            pos = np.where(close < lower, 1, np.where(close > upper, -1, 0))
 
-            # Calcolo dei ritorni giornalieri ponderati dalla posizione
-            returns = self.df_final["Close"].pct_change().shift(-1) * pos  # shift(-1) per ritorno futuro
+            # --- Score su più orizzonti temporali ---
+            horizon_scores = []
+            for h in horizons:
+                # ritorni futuri a h passi
+                future_returns = close.pct_change(h).shift(-h) * pos
+                # media o somma (Sharpe o total return)
+                score_h = np.nanmean(future_returns)
+                horizon_scores.append(score_h)
 
-            # Score = somma dei ritorni cumulati (puoi sostituire con Sharpe ratio)
-            score = np.nansum(returns)
+            # score finale: media pesata dei diversi orizzonti
+            score = np.mean(horizon_scores)
 
             if score > best_score:
                 best_score = score
-                best_params = (tp, up, dn)
+                best_params = (tp, up, dn, matype)
 
             pbar.update(1)
 
         pbar.close()
-        params = {"timeperiod": best_params[0], "nbdevup": best_params[1], "nbdevdn": best_params[2]}
+
+        params = {
+            "BBANDS_TimePeriod": int(best_params[0]),
+            "BBANDS_NBDevUp": round(float(best_params[1]), 2),
+            "BBANDS_NBDevDn": round(float(best_params[2]), 2),
+            "BBANDS_MAType": int(best_params[3]),
+            "BBANDS_Best_Score": round(float(best_score), 6)
+        }
+
+        print("Migliori parametri BBANDS:", params)
+        return params
+    
+    def optimize_volume_adx(self, horizons=[1,3,5], adx_range=(10,40), vol_mult_range=(1.5,3.0,0.1), metric="cumulative"):
+        """
+        Ottimizza Volume Anomaly + ADX su più orizzonti temporali.
         
-        print("Migliori parametri BBANDS:", best_params, "Score:", best_score)
-        return params, best_score
+        Parametri:
+            horizons: lista di int -> orizzonti temporali in candele per valutazione
+            adx_range: tuple -> (min, max) range valori soglia ADX
+            vol_mult_range: tuple -> (min, max, step) moltiplicatore per volume medio
+            metric: str -> "cumulative", "sharpe", "accuracy"
+        
+        Ritorna:
+            dict con i migliori parametri e score
+        """
+        import numpy as np
+        import talib
+        import itertools
+        from tqdm import tqdm
 
-    def genrate_dataset(self):
+        best_score = -np.inf
+        best_params = None
 
-        #macd_params = self.optimize_macd()
+        close = self.df_final["Close"]
+        open_ = self.df_final["Open"]
+        high = self.df_final["High"]
+        low = self.df_final["Low"]
+        volume = self.df_final["Volume"]
 
-        #macd, macdsignal, macdhist = talib.MACD(self.df_final["Close"], fastperiod=macd_params["EMA_Slow_length"], slowperiod=macd_params["EMA_Mid_length"], signalperiod=macd_params["EMA_Fast_length"])
-        macd, macdsignal, macdhist = talib.MACD(self.df_final["Close"], fastperiod=5, slowperiod=14, signalperiod=28)
+        # Precalcolo indicatori
+        self.df_final["Vol_MA20"] = talib.SMA(volume, timeperiod=20)
+        self.df_final["ADX"] = talib.ADX(high, low, close, timeperiod=14)
+
+        adx_thresholds = range(adx_range[0], adx_range[1]+1, 2)
+        vol_multipliers = np.arange(vol_mult_range[0], vol_mult_range[1], vol_mult_range[2])
+
+        total = len(adx_thresholds) * len(vol_multipliers)
+        pbar = tqdm(total=total, desc="Ottimizzazione VolAnomaly+ADX")
+
+        for adx_thr, vm in itertools.product(adx_thresholds, vol_multipliers):
+            # Segnali Volume Anomaly
+            volume_spike = volume > (self.df_final["Vol_MA20"] * vm)
+            buy_signal = volume_spike & (close > open_) & (self.df_final["ADX"] > adx_thr)
+            sell_signal = volume_spike & (close < open_) & (self.df_final["ADX"] > adx_thr)
+
+            pos = np.where(buy_signal, 1, np.where(sell_signal, -1, 0))
+
+            # --- Score multi-orizzonte ---
+            horizon_scores = []
+            for h in horizons:
+                future_returns = close.pct_change(h).shift(-h) * pos
+                if metric == "cumulative":
+                    score_h = np.nansum(future_returns) * 100
+                elif metric == "sharpe":
+                    mean_return = np.nanmean(future_returns)
+                    std_return = np.nanstd(future_returns)
+                    score_h = mean_return / std_return if std_return != 0 else -np.inf
+                elif metric == "accuracy":
+                    correct_signals = np.sum((future_returns > 0) & (pos != 0))
+                    total_signals = np.sum(pos != 0)
+                    score_h = correct_signals / total_signals if total_signals > 0 else 0
+                else:
+                    raise ValueError("Metric deve essere 'cumulative', 'sharpe' o 'accuracy'")
+                horizon_scores.append(score_h)
+
+            # Media score su tutti gli orizzonti
+            score = np.mean(horizon_scores)
+
+            if score > best_score:
+                best_score = score
+                best_params = (adx_thr, vm)
+
+            pbar.update(1)
+
+        pbar.close()
+
+        result = {
+            "Best_ADX_Threshold": best_params[0],
+            "Best_Volume_Multiplier": round(best_params[1],2),
+            "Best_Score": round(float(best_score),6),
+            "Metric": metric,
+            "Horizons": horizons
+        }
+
+        print(result)
+        return result
+
+
+    def generate_dataset(self):
+
+        volume_params = self.optimize_volume_adx()
+        mfi_params = self.optimize_mfi()
+        bb_params = self.optimize_bbands()
+        macd_params = self.optimize_macd_multi_horizon()
+
+        macd, macdsignal, macdhist = talib.MACD(self.df_final["Close"], fastperiod=macd_params["MACD_Fast_length"], slowperiod=macd_params["MACD_Slow_length"], signalperiod=macd_params["MACD_Signal_length"])
+
+        #macd, macdsignal, macdhist = talib.MACD(self.df_final["Close"], fastperiod=5, slowperiod=14, signalperiod=28)
 
         self.df_final["MACD"] = macd
         self.df_final["MACD_signal"] = macdsignal
@@ -151,10 +350,8 @@ class DataPreprocessor:
         self.df_final["RSI_Buy"] = rsi < 30
         self.df_final["RSI_Sell"] = rsi > 70
 
-        self.optimize_bbands()
-        exit()
         # --- Bollinger Bands ---
-        upper, middle, lower = talib.BBANDS(self.df_final["Close"], timeperiod=10, nbdevup=2.77, nbdevdn=2.5, matype=4)
+        upper, middle, lower = talib.BBANDS(self.df_final["Close"], timeperiod=bb_params["BBANDS_TimePeriod"], nbdevup=bb_params["BBANDS_NBDevUp"], nbdevdn=bb_params["BBANDS_NBDevDn"], matype=bb_params["BBANDS_MAType"])
 
         self.df_final["BB_Width"] = (upper - lower) / middle
         self.df_final["BB_Percent_b"] = (self.df_final["Close"] - lower) / (upper - lower)
