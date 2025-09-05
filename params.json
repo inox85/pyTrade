@@ -1,26 +1,10 @@
 {
-    "macd": 
-    {
-        "fast": 6,
-        "slow": 33,
-        "signal": 9
-    },
-    "bBands": 
-    {
-        "timeperiod": 5.0,
-        "nbdevup": 2.0,
-        "nbdevdn": 1.8,
-        "matype": 0
-    },
-    "mfi": 
-    {
-        "timeperiod": 5
-    },
-    "volAnomaly_Adx":
-    {
-        "vol_ma": 20,
-        "adx_timeperiod": 14,
-        "adx_threshold": 25,
-        "volume_multiplier": 1.5
+    "AAPL.US/USD": {
+        "macd": {
+            "MACD_Fast_length": 7,
+            "MACD_Slow_length": 26,
+            "MACD_Signal_length": 11,
+            "Best_Score": 145.525638
+        }
     }
 }

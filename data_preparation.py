@@ -3,11 +3,34 @@ import talib
 import numpy as np
 from tqdm import tqdm
 import itertools
+import json
 
 class DataPreprocessor:
-    def __init__(self, df):
+    def __init__(self, df, symbol):      
         self.df_origin = df
         self.df_final = df.copy()
+        self.symbol = symbol
+        self.params_file = "params.json"
+
+        with open(self.params_file, "r") as f:
+            data = json.load(f)
+            if self.symbol not in data:
+                print("Parametri non trovati per il simbolo:", self.symbol)
+                print("Il campo verrà creato")
+                data[self.symbol] = {}
+                with open(self.params_file, "w") as f:
+                    json.dump(data, f, indent=4)
+        
+        self.config_params = data[self.symbol]
+        print(self.config_params)
+    
+    def save_params(self, field, params):
+        with open(self.params_file, "r") as f:
+            data = json.load(f)
+            data[self.symbol][field] = params
+        
+        with open(self.params_file, "w") as f:
+            json.dump(data, f, indent=4)
 
     def optimize_macd(self, 
                             fast_range=(5, 20), 
@@ -81,15 +104,16 @@ class DataPreprocessor:
         pbar.close()
 
 
-
         params =  { 
             "MACD_Fast_length": best_params[0],
             "MACD_Slow_length": best_params[1],
             "MACD_Signal_length": best_params[2],
-            "MACD_Score_length": float(best_score)
+            "Best_Score": round(float(best_score), 6)
         }
 
         print("Migliori parametri MACD:", params)
+
+        self.save_params("macd", params)
 
         return params
 
@@ -135,9 +159,11 @@ class DataPreprocessor:
 
         params = {
             "MFI_TimePeriod": int(best_params),
-            "MFI_Best_Score": round(float(best_score), 6)
+            "Best_Score": round(float(best_score), 6)
         }
 
+        self.save_params("mfi", params)
+        
         print("Migliori parametri MFI:", params)
         return params
 
@@ -189,20 +215,23 @@ class DataPreprocessor:
             "BBANDS_NBDevUp": round(float(best_params[1]), 2),
             "BBANDS_NBDevDn": round(float(best_params[2]), 2),
             "BBANDS_MAType": int(best_params[3]),
-            "BBANDS_Best_Score": round(float(best_score), 6)
+            "Best_Score": round(float(best_score), 6)
         }
+
+        self.save_params("bBands", params)
 
         print("Migliori parametri BBANDS:", params)
         return params
     
     def optimize_volume_adx(self, horizons=[1,3,5],
-                        vol_ma_range=range(10,51,5),
-                        adx_period_range=range(10,21,2),
-                        adx_threshold_range=range(10,41,2),
-                        vol_mult_range=(1.5,3.0,0.1),
-                        metric="cumulative"):
+                            donchian_range=range(10, 40, 1),
+                            vol_ma_range=range(10,51,5),
+                            adx_period_range=range(10,21,2),
+                            adx_threshold_range=range(10,41,2),
+                            vol_mult_range=(1.5,3.0,0.1),
+                            metric="cumulative"):
         """
-        Ottimizza Volume Anomaly + ADX su più orizzonti temporali includendo tutti i parametri.
+        Ottimizza Volume Anomaly + Donchian + ADX su più orizzonti temporali includendo tutti i parametri.
         """
         import numpy as np
         import talib
@@ -220,21 +249,27 @@ class DataPreprocessor:
 
         vol_multipliers = np.arange(vol_mult_range[0], vol_mult_range[1]+vol_mult_range[2], vol_mult_range[2])
 
-        total = len(vol_ma_range) * len(adx_period_range) * len(adx_threshold_range) * len(vol_multipliers)
-        pbar = tqdm(total=total, desc="Ottimizzazione VolAnomaly+ADX")
+        total = len(donchian_range) * len(vol_ma_range) * len(adx_period_range) * len(adx_threshold_range) * len(vol_multipliers)
+        pbar = tqdm(total=total, desc="Ottimizzazione VolAnomaly+Donchian+ADX")
 
-        for vol_ma, adx_period, adx_thr, vm in itertools.product(vol_ma_range,
-                                                                adx_period_range,
-                                                                adx_threshold_range,
-                                                                vol_multipliers):
-            # --- Calcolo indicatori ---
+        for donchian_w, vol_ma, adx_period, adx_thr, vm in itertools.product(donchian_range,
+                                                                            vol_ma_range,
+                                                                            adx_period_range,
+                                                                            adx_threshold_range,
+                                                                            vol_multipliers):
+            # --- Indicatori ---
             Vol_MA = talib.SMA(volume, timeperiod=vol_ma)
             ADX_val = talib.ADX(high, low, close, timeperiod=adx_period)
+            donchian_high = high.rolling(window=donchian_w).max()
+            donchian_low = low.rolling(window=donchian_w).min()
 
             # --- Segnali ---
             volume_spike = volume > (Vol_MA * vm)
-            buy_signal = volume_spike & (close > open_) & (ADX_val > adx_thr)
-            sell_signal = volume_spike & (close < open_) & (ADX_val > adx_thr)
+            breakout_up = close > donchian_high
+            breakout_down = close < donchian_low
+
+            buy_signal = volume_spike & breakout_up & (ADX_val > adx_thr)
+            sell_signal = volume_spike & breakout_down & (ADX_val > adx_thr)
 
             pos = np.where(buy_signal, 1, np.where(sell_signal, -1, 0))
 
@@ -260,35 +295,38 @@ class DataPreprocessor:
 
             if score > best_score:
                 best_score = score
-                best_params = (vol_ma, adx_period, adx_thr, vm)
+                best_params = (donchian_w, vol_ma, adx_period, adx_thr, vm)
 
             pbar.update(1)
 
         pbar.close()
 
-        result = {
-            "Best_Vol_MA": best_params[0],
-            "Best_ADX_Timeperiod": best_params[1],
-            "Best_ADX_Threshold": best_params[2],
-            "Best_Volume_Multiplier": round(float(best_params[3], 2)),
+        params = {
+            "Best_Donchian_Window": int(best_params[0]),
+            "Best_Vol_MA": int(best_params[1]),
+            "Best_ADX_Timeperiod": int(best_params[2]),
+            "Best_ADX_Threshold": round(float(best_params[3]), 2),
+            "Best_Volume_Multiplier": round(float(best_params[4]), 2),
             "Best_Score": round(float(best_score), 6),
             "Metric": metric,
             "Horizons": horizons
         }
-
-        print(result)
-        return result
-
-
+        
+        self.save_params("volumeAdx", params)
+         
+        print(params)
+        
+        return params
 
     def generate_dataset(self):
 
-        volume_params = self.optimize_volume_adx()
-        mfi_params = self.optimize_mfi()
-        bb_params = self.optimize_bbands()
-        macd_params = self.optimize_macd()
+        self.macd_params = self.optimize_macd()
+        self.volume_params = self.optimize_volume_adx()
+        self.mfi_params = self.optimize_mfi()
+        self.bb_params = self.optimize_bbands()
+        
 
-        macd, macdsignal, macdhist = talib.MACD(self.df_final["Close"], fastperiod=macd_params["MACD_Fast_length"], slowperiod=macd_params["MACD_Slow_length"], signalperiod=macd_params["MACD_Signal_length"])
+        macd, macdsignal, macdhist = talib.MACD(self.df_final["Close"], fastperiod=self.macd_params["MACD_Fast_length"], slowperiod=self.macd_params["MACD_Slow_length"], signalperiod=self.macd_params["MACD_Signal_length"])
 
         #macd, macdsignal, macdhist = talib.MACD(self.df_final["Close"], fastperiod=5, slowperiod=14, signalperiod=28)
 
@@ -351,7 +389,7 @@ class DataPreprocessor:
         self.df_final["RSI_Sell"] = rsi > 70
 
         # --- Bollinger Bands ---
-        upper, middle, lower = talib.BBANDS(self.df_final["Close"], timeperiod=bb_params["BBANDS_TimePeriod"], nbdevup=bb_params["BBANDS_NBDevUp"], nbdevdn=bb_params["BBANDS_NBDevDn"], matype=bb_params["BBANDS_MAType"])
+        upper, middle, lower = talib.BBANDS(self.df_final["Close"], timeperiod=self.bb_params["BBANDS_TimePeriod"], nbdevup=self.bb_params["BBANDS_NBDevUp"], nbdevdn=self.bb_params["BBANDS_NBDevDn"], matype=self.bb_params["BBANDS_MAType"])
 
         self.df_final["BB_Width"] = (upper - lower) / middle
         self.df_final["BB_Percent_b"] = (self.df_final["Close"] - lower) / (upper - lower)
@@ -381,69 +419,82 @@ class DataPreprocessor:
         self.df_final['MFI_Buy'] = mfi < 20
         self.df_final['MFI_Sell'] = mfi > 80
 
+
+        # result = {
+        #     "Best_Donchian_Window": int(best_params[0]),
+        #     "Best_Vol_MA": int(best_params[1]),
+        #     "Best_ADX_Timeperiod": int(best_params[2]),
+        #     "Best_ADX_Threshold": round(float(best_params[3]), 2),
+        #     "Best_Volume_Multiplier": round(float(best_params[4]), 2),
+        #     "Best_Score": round(float(best_score), 6),
+        #     "Metric": metric,
+        #     "Horizons": horizons
+        # }
+        1
         # Volume Anomaly
-        sma_volume = talib.SMA(self.df_final['Volume'], timeperiod=20)
-        volume_spike = self.df_final['Volume'] > (sma_volume * 2.0)
-        self.df_final['VolAnomaly_Buy'] = volume_spike & (self.df_final['Close'] > self.df_final['Open'])
-        self.df_final['VolAnomaly_Sell'] = volume_spike & (self.df_final['Close'] < self.df_final['Open'])
+        sma_volume = talib.SMA(self.df_final['Volume'], timeperiod=self.volume_params["Best_Vol_MA"])
+
+        for vol_coeff in [1.5, 2.0, 3.0]:
+            volume_spike = self.df_final['Volume'] > (sma_volume * vol_coeff)
+            self.df_final[f'VolAnomaly_Buy_{vol_coeff}'] = volume_spike & (self.df_final['Close'] > self.df_final['Open'])
+            self.df_final[f'VolAnomaly_Sell_{vol_coeff}'] = volume_spike & (self.df_final['Close'] < self.df_final['Open'])
 
         # -------------------
         # Breakout con conferma volumi + ADX
         # -------------------
-        self.df_final["Donchian_High"] = self.df_final["High"].rolling(window=20).max()
-        self.df_final["Donchian_Low"] = self.df_final["Low"].rolling(window=20).min()
-        self.df_final["Vol_MA20"] = talib.SMA(self.df_final["Volume"], timeperiod=20)
-        self.df_final["ADX"] = talib.ADX(self.df_final["High"], self.df_final["Low"], self.df_final["Close"], timeperiod=14)
-        adx_threshold = 20
+        self.df_final["Donchian_High"] = self.df_final["High"].rolling(window=self.volume_params["Best_Donchian_Window"]).max()
+        self.df_final["Donchian_Low"] = self.df_final["Low"].rolling(window=self.volume_params["Best_Donchian_Window"]).min()
+        self.df_final["Vol_MA"] = talib.SMA(self.df_final["Volume"], timeperiod=self.volume_params["Best_Vol_MA"])
+        self.df_final["ADX"] = talib.ADX(self.df_final["High"], self.df_final["Low"], self.df_final["Close"], timeperiod=self.volume_params["Best_ADX_Timeperiod"])
+        adx_threshold = self.volume_params["Best_ADX_Threshold"]
 
         self.df_final["Breakout_Up"] = (
             (self.df_final["Close"] > self.df_final["Donchian_High"].shift(1)) &
-            (self.df_final["Volume"] > self.df_final["Vol_MA20"]) &
+            (self.df_final["Volume"] > self.df_final["Vol_MA"]) &
             (self.df_final["ADX"] > adx_threshold)
         )
 
         self.df_final["Breakout_Down"] = (
             (self.df_final["Close"] < self.df_final["Donchian_Low"].shift(1)) &
-            (self.df_final["Volume"] > self.df_final["Vol_MA20"]) &
+            (self.df_final["Volume"] > self.df_final["Vol_MA"]) &
             (self.df_final["ADX"] > adx_threshold)
         )
 
 
-    def generate_targets(self, front_up_candles = 5, th_pct = 0.01):
-        # Parametri
-        N = front_up_candles
-        threshold_pct = th_pct
+    def generate_targets(self, horizons=[5, 10, 20], threshold=0.01):
+        """
+        Genera target multi-orizzonte:
+        - Target_{h}: Buy (1), Sell (-1), Hold (0) basati su una soglia percentuale
+        - Profit_{h}: rendimento percentuale nei prossimi h passi
 
-        # Calcolo ritorno futuro
-        self.df_final['future_return'] = self.df_final['Close'].shift(-N) / self.df_final['Close'] - 1
+        :param horizons: lista degli orizzonti temporali in numero di candele
+        :param threshold: soglia percentuale per classificare Buy/Sell/Hold
+        """
+        for h in horizons:
+            # Rendimento percentuale futuro
+            future_return = (self.df_final['Close'].shift(-h) - self.df_final['Close']) / self.df_final['Close']
 
-        # Generazione target cautelativo
-        def generate_cautious_target(r):
-            if r >= threshold_pct:
-                return 1    # rialzo significativo
-            elif r <= -threshold_pct:
-                return -1   # ribasso significativo
-            else:
-                return 0
+            # Profitto percentuale
+            self.df_final[f'Profit_{h}'] = future_return
 
-        self.df_final['Target'] = self.df_final['future_return'].apply(generate_cautious_target)
-
-        # Calcolo profitto percentuale basato sul target
-        self.df_final['Profit_pct'] = np.where(
-            self.df_final['Target'] == 1,
-            (self.df_final['Close'].shift(-N) - self.df_final['Close']) / self.df_final['Close'],  # long
-            np.where(
-                self.df_final['Target'] == -1,
-                (self.df_final['Close'] - self.df_final['Close'].shift(-N)) / self.df_final['Close'],  # short
-                0
+            # Target classificazione
+            self.df_final[f'Target_{h}'] = np.where(
+                future_return > threshold, 1,     # Buy
+                np.where(future_return < -threshold, -1, 0)  # Sell o Hold
             )
-        )
 
+        #return self.df_final
+
+    def show_full_dataframe(self):
         # Stampiamo DataFrame completo
         pd.set_option("display.max_rows", None)
         pd.set_option("display.max_columns", None)
         print(self.df_final)
-
+        
         # Profitto percentuale totale (somma dei singoli trade)
-        total_profit_pct = self.df_final['Profit_pct'].sum()
-        print(f"\nProfitto teorico totale (%) cumulato: {total_profit_pct*100:.2f}%")
+        self.df_final['Profit_pct'] = self.df_final['Profit_5'] + self.df_final['Profit_10'] + self.df_final['Profit_20']
+        self.df_final['Profit_pct'] = self.df_final['Profit_pct'].fillna(0)
+
+         # Calcolo del profitto teorico totale cumulato
+        print(f"\nProfitto teorico totale (%) cumulato: {self.df_final['Profit_pct'].sum()*100:.2f}%")
+        self.df_final.to_csv(f"data/{self.symbol}_processed.csv", sep=';', encoding='utf-8')
