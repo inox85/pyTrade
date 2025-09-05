@@ -4,25 +4,53 @@ import numpy as np
 from tqdm import tqdm
 import itertools
 import json
+import os
 
 class DataPreprocessor:
     def __init__(self, df, symbol):      
         self.df_origin = df
         self.df_final = df.copy()
         self.symbol = symbol
-        self.params_file = "params.json"
+        self.params_file = "params/params.json"
+        data = self.load_json_safe(self.params_file, True)
 
-        with open(self.params_file, "r") as f:
-            data = json.load(f)
-            if self.symbol not in data:
-                print("Parametri non trovati per il simbolo:", self.symbol)
-                print("Il campo verrà creato")
-                data[self.symbol] = {}
-                with open(self.params_file, "w") as f:
-                    json.dump(data, f, indent=4)
+        if self.symbol not in data:
+            print("Parametri non trovati per il simbolo:", self.symbol)
+            print("Il campo verrà creato")
+            data[self.symbol] = {}
+            with open(self.params_file, "w") as f:
+                json.dump(data, f, indent=4)
         
         self.config_params = data[self.symbol]
         print(self.config_params)
+    
+
+    def load_json_safe(self, filepath, init_empty=True):
+        """
+        Carica un file JSON in modo sicuro.
+        - Se non esiste → restituisce {} (e lo crea se init_empty=True)
+        - Se è vuoto o malformato → restituisce {} (e lo riscrive se init_empty=True)
+        - Altrimenti restituisce i dati caricati
+        """
+        data = {}
+
+        if not os.path.exists(filepath):
+            if init_empty:
+                with open(filepath, "w") as f:
+                    json.dump({}, f, indent=4)
+            return data
+
+        with open(filepath, "r") as f:
+            try:
+                data = json.load(f)
+            except json.JSONDecodeError:
+                # File esistente ma vuoto o malformato
+                data = {}
+                if init_empty:
+                    with open(filepath, "w") as fw:
+                        json.dump({}, fw, indent=4)
+
+        return data
     
     def save_params(self, field, params):
         with open(self.params_file, "r") as f:
