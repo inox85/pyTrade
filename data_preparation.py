@@ -61,11 +61,12 @@ class DataPreprocessor:
             json.dump(data, f, indent=4)
 
     def optimize_macd(self, 
-                            fast_range=(5, 20), 
-                            slow_range=(26, 100), 
-                            signal_range=(5, 20), 
-                            horizons=[1, 3, 5],
-                            weights=None):
+                  fast_range=(5, 20), 
+                  slow_range=(26, 100), 
+                  signal_range=(5, 20), 
+                  horizons=[1, 3, 5],
+                  weights=None,
+                  metric="cumulative"):
         """
         Ottimizza i parametri del MACD con una grid search su più orizzonti temporali.
 
@@ -75,11 +76,20 @@ class DataPreprocessor:
             Lista di orizzonti futuri (in numero di candele).
         weights : list[float] or None
             Pesi per ogni orizzonte (somma = 1). Se None -> pesi uniformi.
+        metric : str
+            "cumulative" -> somma dei ritorni
+            "sharpe" -> rapporto ritorno/std
+            "accuracy" -> % segnali corretti
 
         Ritorna:
         --------
         dict con parametri migliori e score.
         """
+        import numpy as np
+        import itertools
+        import talib
+        from tqdm import tqdm
+
         if weights is None:
             weights = [1/len(horizons)] * len(horizons)
 
@@ -115,11 +125,20 @@ class DataPreprocessor:
                 future_returns = self.df_final["Close"].pct_change(h).shift(-h)
                 strat_returns = future_returns * pos
 
-                total_ret = strat_returns.sum()
-                volatility = strat_returns.std() if strat_returns.std() != 0 else 1
-                sharpe_like = total_ret / volatility
+                if metric == "cumulative":
+                    score_h = strat_returns.sum() * 100
+                elif metric == "sharpe":
+                    total_ret = strat_returns.sum()
+                    volatility = strat_returns.std() if strat_returns.std() != 0 else 1
+                    score_h = total_ret / volatility
+                elif metric == "accuracy":
+                    correct_signals = np.sum((strat_returns > 0) & (pos != 0))
+                    total_signals = np.sum(pos != 0)
+                    score_h = correct_signals / total_signals if total_signals > 0 else 0
+                else:
+                    raise ValueError("Metric deve essere 'cumulative', 'sharpe' o 'accuracy'")
 
-                horizon_scores.append(w * sharpe_like)
+                horizon_scores.append(w * score_h)
 
             score = sum(horizon_scores)
 
@@ -131,12 +150,13 @@ class DataPreprocessor:
 
         pbar.close()
 
-
-        params =  { 
+        params = { 
             "MACD_Fast_length": best_params[0],
             "MACD_Slow_length": best_params[1],
             "MACD_Signal_length": best_params[2],
-            "Best_Score": round(float(best_score), 6)
+            "Best_Score": round(float(best_score), 6),
+            "Metric": metric,
+            "Horizons": horizons
         }
 
         print("Migliori parametri MACD:", params)
@@ -145,11 +165,27 @@ class DataPreprocessor:
 
         return params
 
-    def optimize_mfi(self, horizons=[1, 3, 5]):
+
+    def optimize_mfi(self, horizons=[1, 3, 5], metric="cumulative"):
+        """
+        Ottimizza i parametri del MFI (Money Flow Index).
+
+        Parametri:
+        ----------
+        horizons : list[int]
+            Lista di orizzonti futuri (in numero di candele).
+        metric : str
+            "cumulative" -> somma dei ritorni
+            "sharpe" -> rapporto ritorno/std
+            "accuracy" -> % segnali corretti
+        """
+        import numpy as np
+        import talib
+        from tqdm import tqdm
+
         best_score = -np.inf
         best_params = None
 
-        # Range del parametro periodo MFI
         timeperiod_range = np.arange(5, 50, 1)
 
         total = len(timeperiod_range)
@@ -167,14 +203,25 @@ class DataPreprocessor:
             # Strategia: long se MFI < 20, short se MFI > 80
             pos = np.where(mfi < 20, 1, np.where(mfi > 80, -1, 0))
 
-            # --- Score su più orizzonti temporali ---
             horizon_scores = []
             for h in horizons:
                 future_returns = close.pct_change(h).shift(-h) * pos
-                score_h = np.nanmean(future_returns)  # media rendimento futuro
+
+                if metric == "cumulative":
+                    score_h = np.nansum(future_returns) * 100
+                elif metric == "sharpe":
+                    mean_ret = np.nanmean(future_returns)
+                    std_ret = np.nanstd(future_returns)
+                    score_h = mean_ret / std_ret if std_ret != 0 else -np.inf
+                elif metric == "accuracy":
+                    correct_signals = np.sum((future_returns > 0) & (pos != 0))
+                    total_signals = np.sum(pos != 0)
+                    score_h = correct_signals / total_signals if total_signals > 0 else 0
+                else:
+                    raise ValueError("Metric deve essere 'cumulative', 'sharpe' o 'accuracy'")
+
                 horizon_scores.append(score_h)
 
-            # Score finale: media su tutti gli orizzonti
             score = np.mean(horizon_scores)
 
             if score > best_score:
@@ -187,24 +234,41 @@ class DataPreprocessor:
 
         params = {
             "MFI_TimePeriod": int(best_params),
-            "Best_Score": round(float(best_score), 6)
+            "Best_Score": round(float(best_score), 6),
+            "Metric": metric,
+            "Horizons": horizons
         }
 
         self.save_params("mfi", params)
-        
         print("Migliori parametri MFI:", params)
         return params
 
 
-    def optimize_bbands(self, horizons=[1, 3, 5]):
+    def optimize_bbands(self, horizons=[1, 3, 5], metric="cumulative"):
+        """
+        Ottimizza i parametri delle Bollinger Bands (BBANDS).
+
+        Parametri:
+        ----------
+        horizons : list[int]
+            Lista di orizzonti futuri (in numero di candele).
+        metric : str
+            "cumulative" -> somma dei ritorni
+            "sharpe" -> rapporto ritorno/std
+            "accuracy" -> % segnali corretti
+        """
+        import numpy as np
+        import talib
+        import itertools
+        from tqdm import tqdm
+
         best_score = -np.inf
         best_params = None
 
-        # Range dei parametri da ottimizzare
-        timeperiod_range = np.arange(5, 30, 1)     # lunghezza media mobile
-        nbdevup_range = np.arange(1, 4, 0.1)       # deviazione standard superiore
-        nbdevdn_range = np.arange(1, 4, 0.1)       # deviazione standard inferiore
-        matype_range = [0, 1, 2, 3, 4, 5, 6, 7, 8]                   # tipo di media mobile (limitato per performance)
+        timeperiod_range = np.arange(5, 30, 1)
+        nbdevup_range = np.arange(1, 4, 0.1)
+        nbdevdn_range = np.arange(1, 4, 0.1)
+        matype_range = [0, 1, 2, 3, 4]  # limito i tipi di MA per performance
 
         total = len(timeperiod_range) * len(nbdevup_range) * len(nbdevdn_range) * len(matype_range)
         pbar = tqdm(total=total, desc="Ottimizzazione BBANDS")
@@ -212,22 +276,30 @@ class DataPreprocessor:
         close = self.df_final["Close"]
 
         for tp, up, dn, matype in itertools.product(timeperiod_range, nbdevup_range, nbdevdn_range, matype_range):
-            # Calcolo BBANDS
             upper, middle, lower = talib.BBANDS(close, timeperiod=tp, nbdevup=up, nbdevdn=dn, matype=matype)
 
             # Strategia: long se prezzo < lower, short se prezzo > upper
             pos = np.where(close < lower, 1, np.where(close > upper, -1, 0))
 
-            # --- Score su più orizzonti temporali ---
             horizon_scores = []
             for h in horizons:
-                # ritorni futuri a h passi
                 future_returns = close.pct_change(h).shift(-h) * pos
-                # media o somma (Sharpe o total return)
-                score_h = np.nanmean(future_returns)
+
+                if metric == "cumulative":
+                    score_h = np.nansum(future_returns) * 100
+                elif metric == "sharpe":
+                    mean_ret = np.nanmean(future_returns)
+                    std_ret = np.nanstd(future_returns)
+                    score_h = mean_ret / std_ret if std_ret != 0 else -np.inf
+                elif metric == "accuracy":
+                    correct_signals = np.sum((future_returns > 0) & (pos != 0))
+                    total_signals = np.sum(pos != 0)
+                    score_h = correct_signals / total_signals if total_signals > 0 else 0
+                else:
+                    raise ValueError("Metric deve essere 'cumulative', 'sharpe' o 'accuracy'")
+
                 horizon_scores.append(score_h)
 
-            # score finale: media pesata dei diversi orizzonti
             score = np.mean(horizon_scores)
 
             if score > best_score:
@@ -243,28 +315,33 @@ class DataPreprocessor:
             "BBANDS_NBDevUp": round(float(best_params[1]), 2),
             "BBANDS_NBDevDn": round(float(best_params[2]), 2),
             "BBANDS_MAType": int(best_params[3]),
-            "Best_Score": round(float(best_score), 6)
+            "Best_Score": round(float(best_score), 6),
+            "Metric": metric,
+            "Horizons": horizons
         }
 
         self.save_params("bBands", params)
-
         print("Migliori parametri BBANDS:", params)
         return params
-    
-    def optimize_volume_adx(self, horizons=[1,3,5],
-                            donchian_range=range(10, 40, 1),
-                            vol_ma_range=range(10,51,5),
-                            adx_period_range=range(10,21,2),
-                            adx_threshold_range=range(10,41,2),
-                            vol_mult_range=(1.5,3.0,0.1),
-                            metric="cumulative"):
+
+
+# --------------------------
+# Esempio: dati OHLCV
+# df deve avere colonne: ['Open', 'High', 'Low', 'Close', 'Volume']
+
+# Funzione di ottimizzazione
+# --------------------------
+    def optimize_volume_adx(self, 
+                        horizons=[1,3,5],
+                        donchian_range=np.arange(5,16,1),
+                        vol_ma_range=np.arange(5,16,0.1),
+                        adx_period_range=np.arange(5,15,1),
+                        adx_threshold_range=np.arange(5,16,0.1),
+                        vol_mult_range=np.arange(1.05,1.5,0.1),
+                        metric="cumulative"):
         """
-        Ottimizza Volume Anomaly + Donchian + ADX su più orizzonti temporali includendo tutti i parametri.
+        Ottimizza Volume Spike + ADX + Donchian su più orizzonti temporali.
         """
-        import numpy as np
-        import talib
-        import itertools
-        from tqdm import tqdm
 
         best_score = -np.inf
         best_params = None
@@ -275,21 +352,18 @@ class DataPreprocessor:
         low = self.df_final["Low"]
         volume = self.df_final["Volume"]
 
-        vol_multipliers = np.arange(vol_mult_range[0], vol_mult_range[1]+vol_mult_range[2], vol_mult_range[2])
+        total = (len(donchian_range) * len(vol_ma_range) * len(adx_period_range) *
+                len(adx_threshold_range) * len(vol_mult_range))
+        pbar = tqdm(total=total, desc="Ottimizzazione Volume+ADX", ncols=150)
 
-        total = len(donchian_range) * len(vol_ma_range) * len(adx_period_range) * len(adx_threshold_range) * len(vol_multipliers)
-        pbar = tqdm(total=total, desc="Ottimizzazione VolAnomaly+Donchian+ADX")
+        for donchian_w, vol_ma, adx_period, adx_thr, vm in itertools.product(
+                donchian_range, vol_ma_range, adx_period_range, adx_threshold_range, vol_mult_range):
 
-        for donchian_w, vol_ma, adx_period, adx_thr, vm in itertools.product(donchian_range,
-                                                                            vol_ma_range,
-                                                                            adx_period_range,
-                                                                            adx_threshold_range,
-                                                                            vol_multipliers):
             # --- Indicatori ---
             Vol_MA = talib.SMA(volume, timeperiod=vol_ma)
             ADX_val = talib.ADX(high, low, close, timeperiod=adx_period)
-            donchian_high = high.rolling(window=donchian_w).max()
-            donchian_low = low.rolling(window=donchian_w).min()
+            donchian_high = high.shift(1).rolling(window=donchian_w).max()
+            donchian_low = low.shift(1).rolling(window=donchian_w).min()
 
             # --- Segnali ---
             volume_spike = volume > (Vol_MA * vm)
@@ -299,6 +373,108 @@ class DataPreprocessor:
             buy_signal = volume_spike & breakout_up & (ADX_val > adx_thr)
             sell_signal = volume_spike & breakout_down & (ADX_val > adx_thr)
 
+            pos = np.where(buy_signal, 1, np.where(sell_signal, -1, 0))
+            num_signals = np.sum(pos != 0)
+            if num_signals == 0:
+                pbar.update(1)
+                continue
+
+            # --- Score multi-orizzonte ---
+            horizon_scores = []
+            for h in horizons:
+                future_returns = np.log(close.shift(-h) / close) * pos
+                if metric == "cumulative":
+                    score_h = np.nansum(future_returns) / num_signals * 100
+                elif metric == "sharpe":
+                    mean_ret = np.nanmean(future_returns)
+                    std_ret = np.nanstd(future_returns)
+                    score_h = mean_ret / std_ret if std_ret != 0 else -np.inf
+                elif metric == "accuracy":
+                    correct_signals = np.sum((future_returns > 0) & (pos != 0))
+                    score_h = correct_signals / num_signals
+                else:
+                    raise ValueError("Metric deve essere 'cumulative', 'sharpe' o 'accuracy'")
+                horizon_scores.append(score_h)
+
+            score = np.mean(horizon_scores)
+
+            if score > best_score:
+                best_score = score
+                best_params = (donchian_w, vol_ma, adx_period, adx_thr, vm)
+
+            # Aggiornamento progress bar
+            postfix_str = (f"best_score={best_score:.5f} signals={num_signals}")
+            pbar.set_postfix_str(postfix_str)
+            pbar.update(1)
+
+        pbar.close()
+
+        if best_params is None:
+            raise RuntimeError("Nessun segnale valido trovato!")
+
+        params = {
+            "Best_Donchian_Window": int(best_params[0]),
+            "Best_Vol_MA": int(best_params[1]),
+            "Best_ADX_Timeperiod": int(best_params[2]),
+            "Best_ADX_Threshold": round(float(best_params[3]),2),
+            "Best_Volume_Multiplier": round(float(best_params[4]),2),
+            "Best_Score": float(best_score),
+            "Metric": metric,
+            "Horizons": horizons
+        }
+
+        self.save_params("volumeAdx", params)
+        print("Migliori parametri Volume+ADX:", params)
+        return params
+
+
+
+
+
+
+    def optimize_rsi(self, horizons=[1,3,5],
+                 rsi_period_range=range(5, 31, 1),
+                 rsi_low_range=range(20, 41, 1),
+                 rsi_high_range=range(60, 81, 1),
+                 metric="cumulative"):
+        """
+        Ottimizza RSI (timeperiod + soglie low/high) su più orizzonti temporali.
+
+        Parametri:
+            horizons: lista di int -> orizzonti temporali in candele
+            rsi_period_range: range di valori per il timeperiod RSI
+            rsi_low_range: range per la soglia inferiore (oversold)
+            rsi_high_range: range per la soglia superiore (overbought)
+            metric: str -> "cumulative", "sharpe", "accuracy"
+
+        Ritorna:
+            dict con i migliori parametri e score
+        """
+        import numpy as np
+        import talib
+        import itertools
+        from tqdm import tqdm
+
+        best_score = -np.inf
+        best_params = None
+
+        close = self.df_final["Close"]
+
+        total = len(rsi_period_range) * len(rsi_low_range) * len(rsi_high_range)
+        pbar = tqdm(total=total, desc="Ottimizzazione RSI")
+
+        for period, low_thr, high_thr in itertools.product(rsi_period_range,
+                                                        rsi_low_range,
+                                                        rsi_high_range):
+            if low_thr >= high_thr:  # soglie non valide
+                continue
+
+            # --- RSI ---
+            rsi = talib.RSI(close, timeperiod=period)
+
+            # --- Segnali ---
+            buy_signal = rsi < low_thr
+            sell_signal = rsi > high_thr
             pos = np.where(buy_signal, 1, np.where(sell_signal, -1, 0))
 
             # --- Score multi-orizzonte ---
@@ -323,33 +499,30 @@ class DataPreprocessor:
 
             if score > best_score:
                 best_score = score
-                best_params = (donchian_w, vol_ma, adx_period, adx_thr, vm)
+                best_params = (period, low_thr, high_thr)
 
             pbar.update(1)
 
         pbar.close()
 
         params = {
-            "Best_Donchian_Window": int(best_params[0]),
-            "Best_Vol_MA": int(best_params[1]),
-            "Best_ADX_Timeperiod": int(best_params[2]),
-            "Best_ADX_Threshold": round(float(best_params[3]), 2),
-            "Best_Volume_Multiplier": round(float(best_params[4]), 2),
-            "Best_Score": round(float(best_score), 6),
+            "Best_RSI_Period": best_params[0],
+            "Best_RSI_Low": best_params[1],
+            "Best_RSI_High": best_params[2],
+            "Best_Score": round(float(best_score),6),
             "Metric": metric,
             "Horizons": horizons
         }
-        
-        self.save_params("volumeAdx", params)
-         
-        print(params)
-        
+        self.save_params("rsi", params)
+
         return params
+
 
     def generate_dataset(self):
 
-        self.macd_params = self.optimize_macd()
         self.volume_params = self.optimize_volume_adx()
+        self.rsi_params = self.optimize_rsi()
+        self.macd_params = self.optimize_macd()
         self.mfi_params = self.optimize_mfi()
         self.bb_params = self.optimize_bbands()
         
