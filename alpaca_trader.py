@@ -21,7 +21,7 @@ class AlpacaTrader:
         self.base_url = base_url
         self.symbol = symbol
         self.number_of_days = number_of_days
-        self.api = tradeapi.REST(api_key, api_secret, base_url, api_version='v2')
+        self.api = tradeapi.REST(api_key, self.api_secret, self.base_url, api_version='v2')
         self.account = self.api.get_account()
         self.positions = self.api.list_positions()
         self.orders = self.api.list_orders()

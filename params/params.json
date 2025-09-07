@@ -1,47 +1,13 @@
 {
     "AAPL.US/USD": {
-        "macd": {
-            "MACD_Fast_length": 7,
-            "MACD_Slow_length": 26,
-            "MACD_Signal_length": 11,
-            "Best_Score": 131.711892,
-            "Metric": "cumulative",
-            "Horizons": [
-                1,
-                3,
-                5
-            ]
-        },
+        "1HOUR": {},
         "volumeAdx": {
             "Best_Donchian_Window": 15,
-            "Best_Vol_MA": 13,
-            "Best_ADX_Timeperiod": 9,
-            "Best_ADX_Threshold": 15.0,
+            "Best_Vol_MA": 12,
+            "Best_ADX_Timeperiod": 12,
+            "Best_ADX_Threshold": 15.9,
             "Best_Volume_Multiplier": 1.45,
-            "Best_Score": -0.019347804209689224,
-            "Metric": "cumulative",
-            "Horizons": [
-                1,
-                3,
-                5
-            ]
-        },
-        "mfi": {
-            "MFI_TimePeriod": 5,
-            "Best_Score": 65.561771,
-            "Metric": "cumulative",
-            "Horizons": [
-                1,
-                3,
-                5
-            ]
-        },
-        "bBands": {
-            "BBANDS_TimePeriod": 8,
-            "BBANDS_NBDevUp": 1.1,
-            "BBANDS_NBDevDn": 1.0,
-            "BBANDS_MAType": 0,
-            "Best_Score": 99.535193,
+            "Best_Score": 0.10565327097322717,
             "Metric": "cumulative",
             "Horizons": [
                 1,
@@ -52,8 +18,43 @@
         "rsi": {
             "Best_RSI_Period": 5,
             "Best_RSI_Low": 35,
-            "Best_RSI_High": 70,
-            "Best_Score": 30.319014,
+            "Best_RSI_High": 62,
+            "Best_Score": 23.360843,
+            "Metric": "cumulative",
+            "Horizons": [
+                1,
+                3,
+                5
+            ]
+        },
+        "macd": {
+            "MACD_Fast_length": 15,
+            "MACD_Slow_length": 26,
+            "MACD_Signal_length": 9,
+            "Best_Score": 98.165941,
+            "Metric": "cumulative",
+            "Horizons": [
+                1,
+                3,
+                5
+            ]
+        },
+        "mfi": {
+            "MFI_TimePeriod": 5,
+            "Best_Score": 51.915155,
+            "Metric": "cumulative",
+            "Horizons": [
+                1,
+                3,
+                5
+            ]
+        },
+        "bBands": {
+            "BBANDS_TimePeriod": 9,
+            "BBANDS_NBDevUp": 1.0,
+            "BBANDS_NBDevDn": 1.3,
+            "BBANDS_MAType": 0,
+            "Best_Score": 55.811943,
             "Metric": "cumulative",
             "Horizons": [
                 1,
@@ -62,5 +63,10 @@
             ]
         }
     },
-    "PLTR.US/USD": {}
+    "PLTR.US/USD": {
+        "1HOUR": {}
+    },
+    "AAPL": {
+        "1H": {}
+    }
 }

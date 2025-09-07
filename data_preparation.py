@@ -7,7 +7,8 @@ import json
 import os
 
 class DataPreprocessor:
-    def __init__(self, df, symbol):      
+    def __init__(self, df, symbol, interval):      
+        self.interval = interval
         self.df_origin = df
         self.df_final = df.copy()
         self.symbol = symbol
@@ -18,10 +19,11 @@ class DataPreprocessor:
             print("Parametri non trovati per il simbolo:", self.symbol)
             print("Il campo verrà creato")
             data[self.symbol] = {}
+            data[self.symbol][self.interval] = {}
             with open(self.params_file, "w") as f:
                 json.dump(data, f, indent=4)
         
-        self.config_params = data[self.symbol]
+        self.config_params = data[self.symbol][self.interval]
         print(self.config_params)
     
 
@@ -427,11 +429,6 @@ class DataPreprocessor:
         print("Migliori parametri Volume+ADX:", params)
         return params
 
-
-
-
-
-
     def optimize_rsi(self, horizons=[1,3,5],
                  rsi_period_range=range(5, 31, 1),
                  rsi_low_range=range(20, 41, 1),
@@ -515,6 +512,79 @@ class DataPreprocessor:
         }
         self.save_params("rsi", params)
 
+        return params
+    
+    def optimize_trade_count_norm(self, horizons=[1,3,5],
+                              window_range=range(2, 51),
+                              metric="cumulative"):
+        """
+        Ottimizza la lunghezza della media mobile per trade_count_norm su più orizzonti temporali.
+
+        Parametri:
+            horizons: lista di int -> orizzonti temporali in candele
+            window_range: range dei valori della finestra rolling
+            metric: str -> "cumulative", "sharpe", "accuracy"
+
+        Ritorna:
+            dict con la finestra ottimale e score
+        """
+        import numpy as np
+        from tqdm import tqdm
+
+        best_score = -np.inf
+        best_window = None
+
+        close = self.df_final["Close"]
+        trade_count = self.df_final["trade_count"]
+
+        total = len(window_range)
+        pbar = tqdm(total=total, desc="Ottimizzazione trade_count_norm")
+
+        for window in window_range:
+            # --- Calcolo trade_count_norm ---
+            trade_count_norm = trade_count / trade_count.rolling(window).mean()
+
+            # Segnali basati su trade_count_norm > 1 => attività alta, < 1 => bassa
+            buy_signal = trade_count_norm > 1
+            sell_signal = trade_count_norm < 1
+            pos = np.where(buy_signal, 1, np.where(sell_signal, -1, 0))
+
+            # --- Score multi-orizzonte ---
+            horizon_scores = []
+            for h in horizons:
+                future_returns = close.pct_change(h).shift(-h) * pos
+                if metric == "cumulative":
+                    score_h = np.nansum(future_returns) * 100
+                elif metric == "sharpe":
+                    mean_return = np.nanmean(future_returns)
+                    std_return = np.nanstd(future_returns)
+                    score_h = mean_return / std_return if std_return != 0 else -np.inf
+                elif metric == "accuracy":
+                    correct_signals = np.sum((future_returns > 0) & (pos != 0))
+                    total_signals = np.sum(pos != 0)
+                    score_h = correct_signals / total_signals if total_signals > 0 else 0
+                else:
+                    raise ValueError("Metric deve essere 'cumulative', 'sharpe' o 'accuracy'")
+                horizon_scores.append(score_h)
+
+            score = np.mean(horizon_scores)
+
+            if score > best_score:
+                best_score = score
+                best_window = window
+
+            pbar.update(1)
+
+        pbar.close()
+
+        params = {
+            "Best_TradeCountNorm_Window": best_window,
+            "Best_Score": round(float(best_score), 6),
+            "Metric": metric,
+            "Horizons": horizons
+        }
+
+        self.save_params("trade_count_norm", params)
         return params
 
 
@@ -661,6 +731,19 @@ class DataPreprocessor:
             (self.df_final["ADX"] > adx_threshold)
         )
 
+        
+        # # === 1. Differenza Close - VWAP
+        # df["close_minus_vwap"] = df["close"] - df["vwap"]
+
+        # # === 2. Rapporto Close/VWAP
+        # df["close_div_vwap"] = df["close"] / df["vwap"]
+
+        # # === 3. Dimensione media degli scambi (volume medio per trade)
+        # df["avg_trade_size"] = df["volume"] / df["trade_count"]
+
+        # # === 4. Normalizzazione del trade_count (rispetto alla media mobile 3)
+        # df["trade_count_norm"] = df["trade_count"] / df["trade_count"].rolling(3).mean()
+
 
     def generate_targets(self, horizons=[5, 10, 20], threshold=0.01):
         """
@@ -690,12 +773,12 @@ class DataPreprocessor:
         # Stampiamo DataFrame completo
         pd.set_option("display.max_rows", None)
         pd.set_option("display.max_columns", None)
-        print(self.df_final)
+        #print(self.df_final)
         
         # Profitto percentuale totale (somma dei singoli trade)
         self.df_final['Profit_pct'] = self.df_final['Profit_5'] + self.df_final['Profit_10'] + self.df_final['Profit_20']
         self.df_final['Profit_pct'] = self.df_final['Profit_pct'].fillna(0)
-
-         # Calcolo del profitto teorico totale cumulato
+        
+        # Calcolo del profitto teorico totale cumulato
         print(f"\nProfitto teorico totale (%) cumulato: {self.df_final['Profit_pct'].sum()*100:.2f}%")
-        self.df_final.to_csv(f"data/{self.symbol}_processed.csv", sep=';', encoding='utf-8')
+        #self.df_final.to_csv(f"data/{self.symbol}_processed.csv", sep=';', encoding='utf-8')
