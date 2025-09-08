@@ -7,21 +7,29 @@ import json
 import os
 
 class DataPreprocessor:
-    def __init__(self, df, symbol, interval, load_params=False):      
+    def __init__(self, df, symbol, interval, recalculate_params=False):      
         self.interval = interval
         self.df_origin = df
         self.df_final = df.copy()
         self.symbol = symbol
         self.params_file = "params/params.json"
         data = self.load_json_safe(self.params_file, True)
+        self.recalculate_params = recalculate_params
 
         if self.symbol not in data:
             print("Parametri non trovati per il simbolo:", self.symbol)
-            print("Il campo verrà creato")
+            print("Il campo verrà creato e verranno calcolati i parametri ottimizati")
             data[self.symbol] = {}
+            self.recalculate_params = True
+
+        if self.interval not in data[self.symbol]:
+            print("Parametri non trovati per il simbolo:", self.interval)
+            print("Il campo verrà creato e verranno calcolati i parametri ottimizati")
+            self.recalculate_params = True
             data[self.symbol][self.interval] = {}
-            with open(self.params_file, "w") as f:
-                json.dump(data, f, indent=4)
+
+        with open(self.params_file, "w") as f:
+            json.dump(data, f, indent=4)
         
         self.config_params = data[self.symbol][self.interval]
         print(self.config_params)
@@ -57,7 +65,7 @@ class DataPreprocessor:
     def save_params(self, field, params):
         with open(self.params_file, "r") as f:
             data = json.load(f)
-            data[self.symbol][field] = params
+            data[self.symbol][self.interval][field] = params
         
         with open(self.params_file, "w") as f:
             json.dump(data, f, indent=4)
@@ -662,21 +670,32 @@ class DataPreprocessor:
             }
             print(params)
         
-        self.save_params("trade_count_norm", params)
+        self.save_params("tradeCountNorm", params)
         return params
 
 
     def generate_dataset(self):
         
-        self.obv_params = self.optimize_obv()
-        self.volume_params = self.optimize_volume_adx()
-        self.macd_params = self.optimize_macd()  
-        self.mfi_params = self.optimize_mfi()   
-        self.rsi_params = self.optimize_rsi()
-        self.mfi_params = self.optimize_mfi()
-        self.trade_count_params =self.optimize_trade_count_norm()
-        self.bb_params = self.optimize_bbands()
+        if self.recalculate_params:
+            print("Inizio ricalcolo parametri...")
+            self.obv_params = self.optimize_obv()
+            self.volume_params = self.optimize_volume_adx()
+             
+            self.mfi_params = self.optimize_mfi()   
+            self.rsi_params = self.optimize_rsi()
+            self.trade_count_params =self.optimize_trade_count_norm()
+            self.bb_params = self.optimize_bbands()
+        else:
+            print("Inizio caricamento parametri...")
+            self.obv_params = self.config_params["obv"]
+            self.volume_params = self.config_params["volumeAdx"]
+            self.macd_params = self.config_params["macd"] 
+            self.mfi_params = self.config_params["mfi"]  
+            self.rsi_params = self.config_params["rsi"]
+            self.trade_count_params = self.config_params["tradeCountNorm"]
+            self.bb_params = self.config_params["bBands"]
 
+        print("Inizio elaborazione dataset...")
         macd, macdsignal, macdhist = talib.MACD(self.df_final["Close"], fastperiod=self.macd_params["MACD_Fast_length"], slowperiod=self.macd_params["MACD_Slow_length"], signalperiod=self.macd_params["MACD_Signal_length"])
 
         #macd, macdsignal, macdhist = talib.MACD(self.df_final["Close"], fastperiod=5, slowperiod=14, signalperiod=28)
@@ -699,13 +718,14 @@ class DataPreprocessor:
         # 3) Calcolo SMA e EMA
         # =========================================
         for p in periods:
-            self.df_final[f"SMA_{p}"] = self.df_final["Close"].rolling(window=p).mean()
+            #self.df_final[f"SMA_{p}"] = self.df_final["Close"].rolling(window=p).mean()
             self.df_final[f"EMA_{p}"] = self.df_final["Close"].ewm(span=p, adjust=False).mean()
             self.df_final[f"MACD_Hist_volatility_{p}"] = macdhist.rolling(p).std()
 
         # =========================================
         # 4) Calcolo slope percentuale
         # =========================================
+
         window_slope = 5  # numero di periodi per calcolare la pendenza
 
         # slope percentuale sul prezzo
@@ -803,34 +823,22 @@ class DataPreprocessor:
 
         # VWAP
         self.df_final["VWAP"] = (self.df_final["Close"] * self.df_final["Volume"]).cumsum() / self.df_final["Volume"].cumsum()
-        #self.df_final["VWAP_Buy"] = self.df_final["Close"] > self.df_final["VWAP"]
-        #self.df_final["VWAP_Sell"] = self.df_final["Close"] < self.df_final["VWAP"]
+        self.df_final["Close_VWAP_Diff"] = self.df_final["Close"] - self.df_final["VWAP"]
+        self.df_final["Close_VWAP_Ratio"] = self.df_final["Close"] / self.df_final["VWAP"]
+
+        self.df_final["Avg_Trade_Size"] = self.df_final["Volume"] / self.df_final["trade_count"]
+        self.df_final["Trade_Count_Norm"] = self.df_final["trade_count"] / self.df_final["trade_count"].rolling(3).mean()
 
         # Money Flow Index (MFI)
-        mfi = talib.MFI(self.df_final['High'], self.df_final['Low'], self.df_final['Close'], self.df_final['Volume'], timeperiod=14)
-        #self.df_final['MFI_Buy'] = mfi < 20
-        #self.df_final['MFI_Sell'] = mfi > 80
 
-        # result = {
-        #     "Best_Donchian_Window": int(best_params[0]),
-        #     "Best_Vol_MA": int(best_params[1]),
-        #     "Best_ADX_Timeperiod": int(best_params[2]),
-        #     "Best_ADX_Threshold": round(float(best_params[3]), 2),
-        #     "Best_Volume_Multiplier": round(float(best_params[4]), 2),
-        #     "Best_Score": round(float(best_score), 6),
-        #     "Metric": metric,
-        #     "Horizons": horizons
-        # }
-        
+
+        mfi = talib.MFI(self.df_final['High'], self.df_final['Low'], self.df_final['Close'], self.df_final['Volume'], timeperiod=self.mfi_params["MFI_TimePeriod"])
+
         # Volume Anomaly
-        
-        sma_volume = talib.SMA(self.df_final['Volume'], timeperiod=self.volume_params["Best_Vol_MA"])
 
-        for vol_coeff in [1.5, 2.0, 3.0]:
-            volume_spike = self.df_final['Volume'] > (sma_volume * vol_coeff)
-            self.df_final[f'VolAnomaly_Buy_{vol_coeff}'] = volume_spike & (self.df_final['Close'] > self.df_final['Open'])
-            self.df_final[f'VolAnomaly_Sell_{vol_coeff}'] = volume_spike & (self.df_final['Close'] < self.df_final['Open'])
-         
+        sma_volume = talib.SMA(self.df_final['Volume'], timeperiod=self.volume_params["Best_Vol_MA"])
+        volume_spike = self.df_final['Volume'] > (sma_volume * self.volume_params["Best_Volume_Multiplier"])
+
         # -------------------
         # Breakout con conferma volumi + ADX
         # -------------------
@@ -841,31 +849,18 @@ class DataPreprocessor:
         self.df_final["ADX"] = talib.ADX(self.df_final["High"], self.df_final["Low"], self.df_final["Close"], timeperiod=self.volume_params["Best_ADX_Timeperiod"])
         adx_threshold = self.volume_params["Best_ADX_Threshold"]
 
-        self.df_final["Breakout_Up"] = (
-            (self.df_final["Close"] > self.df_final["Donchian_High"].shift(1)) &
-            (self.df_final["Volume"] > self.df_final["Vol_MA"]) &
-            (self.df_final["ADX"] > adx_threshold)
-        )
+        # self.df_final["Breakout_Up"] = (
+        #     (self.df_final["Close"] > self.df_final["Donchian_High"].shift(1)) &
+        #     (self.df_final["Volume"] > self.df_final["Vol_MA"]) &
+        #     (self.df_final["ADX"] > adx_threshold)
+        # )
 
-        self.df_final["Breakout_Down"] = (
-            (self.df_final["Close"] < self.df_final["Donchian_Low"].shift(1)) &
-            (self.df_final["Volume"] > self.df_final["Vol_MA"]) &
-            (self.df_final["ADX"] > adx_threshold)
-        )
-
-        
-        # # === 1. Differenza Close - VWAP
-        # df["close_minus_vwap"] = df["close"] - df["vwap"]
-
-        # # === 2. Rapporto Close/VWAP
-        # df["close_div_vwap"] = df["close"] / df["vwap"]
-
-        # # === 3. Dimensione media degli scambi (volume medio per trade)
-        # df["avg_trade_size"] = df["volume"] / df["trade_count"]
-
-        # # === 4. Normalizzazione del trade_count (rispetto alla media mobile 3)
-        # df["trade_count_norm"] = df["trade_count"] / df["trade_count"].rolling(3).mean()
-
+        # self.df_final["Breakout_Down"] = (
+        #     (self.df_final["Close"] < self.df_final["Donchian_Low"].shift(1)) &
+        #     (self.df_final["Volume"] > self.df_final["Vol_MA"]) &
+        #     (self.df_final["ADX"] > adx_threshold)
+        # )
+        print("Fine generazione dataset!")
 
     def generate_targets(self, horizons=[5, 10, 20], threshold=0.01):
         """
