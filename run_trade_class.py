@@ -16,9 +16,6 @@ def main():
 
     start = (now - timedelta(days=365)).date()
 
-    start_d = start
-    end_d = now.date()
-
     start_d = datetime(start.year, start.month, start.day, 14, 30) 
     end_d = datetime(now.year, now.month, now.day, 21, 0) 
 
@@ -27,7 +24,7 @@ def main():
 
     df_history = alpaca.download_data("1H", start_date=start_date, end_date=end_date )
 
-    prepocessor = DataPreprocessor(df_history, symbol="AAPL", interval="1H")
+    prepocessor = DataPreprocessor(df_history, symbol="PLTR", interval="1H")
     prepocessor.generate_dataset()
 
     # for instrument in instruments:
