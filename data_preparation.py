@@ -170,7 +170,6 @@ class DataPreprocessor:
                 pbar.update(1)
             pbar.close()
 
-
             params = { 
                 "MACD_Fast_length": best_params[0],
                 "MACD_Slow_length": best_params[1],
@@ -342,6 +341,85 @@ class DataPreprocessor:
         self.save_params("mfi", params)
         
         return params
+    
+    def optimize_obv(self, horizons=[1,3,5],
+                 slope_window_range=range(3, 11),
+                 momentum_window_range=range(10, 51, 1),
+                 metric="cumulative"):
+        """
+        Ottimizza le due lunghezze rolling di OBV:
+            - slope_window: finestra per rolling mean della derivata OBV
+            - momentum_window: finestra per media mobile OBV (per momentum)
+        
+        Parametri:
+            horizons: lista di int -> orizzonti temporali in candele
+            slope_window_range: range di valori per la finestra della derivata OBV
+            momentum_window_range: range per la finestra della media OBV
+            metric: str -> "cumulative", "sharpe", "accuracy"
+
+        Ritorna:
+            dict con i migliori parametri e score
+        """
+        import numpy as np
+        import talib
+        import itertools
+        from tqdm import tqdm
+
+        best_score = -np.inf
+        best_params = None
+
+        close = self.df_final["Close"]
+        volume = self.df_final["Volume"]
+
+        total = len(slope_window_range) * len(momentum_window_range)
+
+        for invert in [False, True]:
+            pbar = tqdm(total=total, desc="Ottimizzazione OBV")
+            for slope_win, mom_win in itertools.product(slope_window_range, momentum_window_range):
+                # --- Calcolo OBV ---
+                obv = talib.OBV(close, volume)
+                obv_diff = obv.diff()
+                obv_slope = obv_diff.rolling(slope_win).mean()
+
+                # Segnale numerico semplice: 1 se slope positivo, -1 se negativo
+                pos = np.where(obv_slope > 0, 1, np.where(obv_slope < 0, -1, 0))
+
+                if invert:
+                    pos = -pos
+
+                num_signals = np.sum(pos != 0)
+                if num_signals == 0:
+                    pbar.update(1)
+                    continue
+
+                # Calcolo score (puoi usare la tua funzione get_score)
+                score = self.get_score(close, pos)
+
+                if score > best_score:
+                    best_score = score
+                    best_params = (slope_win, mom_win, invert, num_signals)
+
+                # Aggiornamento progress bar
+                postfix_str = (f"best_score={best_score:.5f} signals={num_signals}")
+                pbar.set_postfix_str(postfix_str)
+                pbar.update(1)
+
+            pbar.close()
+
+            params = {
+                "Best_OBV_Slope_Window": best_params[0],
+                "Best_OBV_Momentum_Window": best_params[1],
+                "Best_Score": round(float(best_score),6),
+                "Metric": metric,
+                "Horizons": horizons,
+                "Signals": int(best_params[3]),
+                "Inverted:": best_params[2]       
+            }
+            print(params)
+
+        self.save_params("obv", params)
+
+        return params
 
     def optimize_bbands(self, horizons=[1, 3, 5], metric="cumulative"):
         """
@@ -379,12 +457,11 @@ class DataPreprocessor:
 
                 upper, middle, lower = talib.BBANDS(close, timeperiod=tp, nbdevup=up, nbdevdn=dn, matype=matype)
 
-                # Strategia: long se prezzo < lower, short se prezzo > upper
-                if invert:
-                    pos = np.where(close > lower, 1, np.where(close < upper, -1, 0))
-                else:       
-                    pos = np.where(close < lower, 1, np.where(close > upper, -1, 0))
+                pos = np.where(close < lower, 1, np.where(close > upper, -1, 0))
                 
+                if invert:
+                    pos = -pos
+
                 num_signals = np.sum(pos != 0)
                 if num_signals == 0:
                     pbar.update(1)
@@ -430,11 +507,11 @@ class DataPreprocessor:
 # --------------------------
     def optimize_volume_adx(self, 
                         horizons=[1,3,5],
-                        donchian_range=np.arange(5,16,1),
-                        vol_ma_range=np.arange(5,16,0.1),
+                        donchian_range=np.arange(2,16,1),
+                        vol_ma_range=np.arange(2,16,0.5),
                         adx_period_range=np.arange(5,15,1),
-                        adx_threshold_range=np.arange(5,16,0.1),
-                        vol_mult_range=np.arange(1.05,1.5,0.1),
+                        adx_threshold_range=np.arange(5,16,0.5),
+                        vol_mult_range=np.arange(1.05,1.5,0.5),
                         metric="cumulative"):
         """
         Ottimizza Volume Spike + ADX + Donchian su più orizzonti temporali.
@@ -469,14 +546,15 @@ class DataPreprocessor:
                 breakout_up = close > donchian_high
                 breakout_down = close < donchian_low
 
-                if invert:
-                    buy_signal = volume_spike & breakout_up & (ADX_val < adx_thr)
-                    sell_signal = volume_spike & breakout_down & (ADX_val < adx_thr)
-                else:
-                    buy_signal = volume_spike & breakout_up & (ADX_val > adx_thr)
-                    sell_signal = volume_spike & breakout_down & (ADX_val > adx_thr)
+
+                buy_signal = volume_spike & breakout_up & (ADX_val > adx_thr)
+                sell_signal = volume_spike & breakout_down & (ADX_val > adx_thr)
 
                 pos = np.where(buy_signal, 1, np.where(sell_signal, -1, 0))
+
+                # --- Inversione completa ---
+                if invert:
+                    pos = -pos
 
                 num_signals = np.sum(pos != 0)
                 if num_signals == 0:
@@ -548,14 +626,17 @@ class DataPreprocessor:
                 trade_count_norm = trade_count / trade_count.rolling(window).mean()
 
                 # Segnali basati su trade_count_norm > 1 => attività alta, < 1 => bassa
-                if invert:
-                    buy_signal = trade_count_norm < 1
-                    sell_signal = trade_count_norm > 1
-                else:
-                    buy_signal = trade_count_norm > 1
-                    sell_signal = trade_count_norm < 1
+                # if invert:
+                #     buy_signal = trade_count_norm < 1
+                #     sell_signal = trade_count_norm > 1
+                # else:
+                buy_signal = trade_count_norm > 1
+                sell_signal = trade_count_norm < 1
 
                 pos = np.where(buy_signal, 1, np.where(sell_signal, -1, 0))
+
+                if invert:
+                    pos = -pos
 
                 num_signals = np.sum(pos != 0)
                 if num_signals == 0:
@@ -567,8 +648,6 @@ class DataPreprocessor:
                 if score > best_score:
                     best_score = score
                     best_params = (window, invert, num_signals)
-
-
 
                 pbar.update(1)  
             pbar.close()
@@ -588,18 +667,15 @@ class DataPreprocessor:
 
 
     def generate_dataset(self):
-
+        
+        self.obv_params = self.optimize_obv()
+        self.volume_params = self.optimize_volume_adx()
         self.macd_params = self.optimize_macd()  
         self.mfi_params = self.optimize_mfi()   
         self.rsi_params = self.optimize_rsi()
         self.mfi_params = self.optimize_mfi()
         self.trade_count_params =self.optimize_trade_count_norm()
-        
-        
         self.bb_params = self.optimize_bbands()
-              
-        self.volume_params = self.optimize_volume_adx()
-        
 
         macd, macdsignal, macdhist = talib.MACD(self.df_final["Close"], fastperiod=self.macd_params["MACD_Fast_length"], slowperiod=self.macd_params["MACD_Slow_length"], signalperiod=self.macd_params["MACD_Signal_length"])
 
@@ -609,8 +685,13 @@ class DataPreprocessor:
         self.df_final["MACD_signal"] = macdsignal
         self.df_final["MACD_hist"] = macdhist
 
-        self.df_final["MACD_Buy"] = (macd > macdsignal) & (macd.shift(1) <= macdsignal.shift(1))
-        self.df_final["MACD_Sell"] = (macd < macdsignal) & (macd.shift(1) >= macdsignal.shift(1))
+        self.df_final["MACD_diff"] = macd - macdsignal
+        self.df_final["MACD_slope"] = macd.diff()
+        self.df_final["Signal_slope"] = macdsignal.diff()
+
+
+        # self.df_final["MACD_Buy"] = (macd > macdsignal) & (macd.shift(1) <= macdsignal.shift(1))
+        # self.df_final["MACD_Sell"] = (macd < macdsignal) & (macd.shift(1) >= macdsignal.shift(1))
 
         periods = [5, 10, 20, 50, 100]
 
@@ -620,6 +701,7 @@ class DataPreprocessor:
         for p in periods:
             self.df_final[f"SMA_{p}"] = self.df_final["Close"].rolling(window=p).mean()
             self.df_final[f"EMA_{p}"] = self.df_final["Close"].ewm(span=p, adjust=False).mean()
+            self.df_final[f"MACD_Hist_volatility_{p}"] = macdhist.rolling(p).std()
 
         # =========================================
         # 4) Calcolo slope percentuale
@@ -657,11 +739,11 @@ class DataPreprocessor:
         self.df_final = pd.concat([self.df_final, pd.DataFrame(new_cols, index=self.df_final.index)], axis=1)
 
         # --- RSI ---
-        rsi = talib.RSI(self.df_final["Close"], timeperiod=14)
+        rsi = talib.RSI(self.df_final["Close"], timeperiod=self.rsi_params["Best_RSI_Period"])
         self.df_final["RSI"] = rsi
         self.df_final["RSI_norm"] = rsi / 100
-        self.df_final["RSI_Buy"] = rsi < 30
-        self.df_final["RSI_Sell"] = rsi > 70
+        #self.df_final["RSI_Buy"] = rsi < 30
+        #self.df_final["RSI_Sell"] = rsi > 70
 
         # --- Bollinger Bands ---
         upper, middle, lower = talib.BBANDS(self.df_final["Close"], timeperiod=self.bb_params["BBANDS_TimePeriod"], nbdevup=self.bb_params["BBANDS_NBDevUp"], nbdevdn=self.bb_params["BBANDS_NBDevDn"], matype=self.bb_params["BBANDS_MAType"])
@@ -671,29 +753,63 @@ class DataPreprocessor:
         self.df_final["BB_Breakout_up"] = (self.df_final["Close"] > upper).astype(int)
         self.df_final["BB_Breakout_down"] = (self.df_final["Close"] < lower).astype(int)
 
-        self.df_final["BB_Buy"] = (self.df_final["Close"] < lower).astype(int)
-        self.df_final["BB_Sell"] = (self.df_final["Close"] > upper).astype(int)
+        #self.df_final["BB_Buy"] = (self.df_final["Close"] < lower).astype(int)
+        #self.df_final["BB_Sell"] = (self.df_final["Close"] > upper).astype(int)
 
+        self.df_final["Body_today"] = abs(self.df_final["Close"] - self.df_final["Open"])
+        self.df_final["Body_prev"] = abs(self.df_final["Close"].shift(1) - self.df_final["Open"].shift(1))
+
+        # Rapporto dimensioni
+        self.df_final["Engulfing_ratio"] = self.df_final["Body_today"] / (self.df_final["Body_prev"] + 1e-9)
+
+        # Direzione candela attuale (+1 verde, -1 rossa, 0 doji)
+        self.df_final["Engulfing_direction"] = np.sign(self.df_final["Close"] - self.df_final["Open"])
+
+        # Forza rispetto all'apertura precedente
+        self.df_final["Engulfing_strength"] = (
+            (self.df_final["Close"] - self.df_final["Open"].shift(1)) * self.df_final["Engulfing_direction"]
+        )
+
+        # 🔹 Calcolo dei corpi (open/close, no shadow)
+        prev_low_body  = self.df_final[["Open", "Close"]].shift(1).min(axis=1)
+        prev_high_body = self.df_final[["Open", "Close"]].shift(1).max(axis=1)
+        today_low_body  = self.df_final[["Open", "Close"]].min(axis=1)
+        today_high_body = self.df_final[["Open", "Close"]].max(axis=1)
+
+        # Fattore di inclusione (quanto del corpo precedente è contenuto nell'attuale)
+        self.df_final["Engulfing_inclusion"] = (
+            (np.minimum(today_high_body, prev_high_body) - np.maximum(today_low_body, prev_low_body))
+            / (prev_high_body - prev_low_body + 1e-9)
+        )
+
+        # 🔹 Quantificazione finale = forza * inclusione
+        self.df_final["Engulfing_index"] = (
+            self.df_final["Engulfing_ratio"] *
+            self.df_final["Engulfing_strength"] *
+            self.df_final["Engulfing_inclusion"]
+        )
         # Engulfing
-        self.df_final["Engulfing_Buy"] = (self.df_final["Close"] > self.df_final["Open"]) & (self.df_final["Close"].shift(1) < self.df_final["Open"].shift(1))
-        self.df_final["Engulfing_Sell"] = (self.df_final["Close"] < self.df_final["Open"]) & (self.df_final["Close"].shift(1) > self.df_final["Open"].shift(1))
+        #self.df_final["Engulfing_Buy"] = (self.df_final["Close"] > self.df_final["Open"]) & (self.df_final["Close"].shift(1) < self.df_final["Open"].shift(1))
+        #self.df_final["Engulfing_Sell"] = (self.df_final["Close"] < self.df_final["Open"]) & (self.df_final["Close"].shift(1) > self.df_final["Open"].shift(1))
 
         # OBV
         self.df_final["OBV"] = talib.OBV(self.df_final["Close"], self.df_final["Volume"])
-        obv_signal = self.df_final["OBV"].diff() > 0
-        self.df_final["OBV_Buy"] = obv_signal & (obv_signal.shift(1) == False)
-        self.df_final["OBV_Sell"] = ~obv_signal & (obv_signal.shift(1) == True)
+
+        # Differenze e momentum continui
+        self.df_final["OBV_diff"] = self.df_final["OBV"].diff()
+        self.df_final["OBV_pct"] = self.df_final["OBV"].pct_change()
+        self.df_final["OBV_slope"] = self.df_final["OBV"].diff().rolling(5).mean()
+        self.df_final["OBV_momentum"] = self.df_final["OBV"] - self.df_final["OBV"].rolling(20).mean()
 
         # VWAP
         self.df_final["VWAP"] = (self.df_final["Close"] * self.df_final["Volume"]).cumsum() / self.df_final["Volume"].cumsum()
-        self.df_final["VWAP_Buy"] = self.df_final["Close"] > self.df_final["VWAP"]
-        self.df_final["VWAP_Sell"] = self.df_final["Close"] < self.df_final["VWAP"]
+        #self.df_final["VWAP_Buy"] = self.df_final["Close"] > self.df_final["VWAP"]
+        #self.df_final["VWAP_Sell"] = self.df_final["Close"] < self.df_final["VWAP"]
 
         # Money Flow Index (MFI)
         mfi = talib.MFI(self.df_final['High'], self.df_final['Low'], self.df_final['Close'], self.df_final['Volume'], timeperiod=14)
-        self.df_final['MFI_Buy'] = mfi < 20
-        self.df_final['MFI_Sell'] = mfi > 80
-
+        #self.df_final['MFI_Buy'] = mfi < 20
+        #self.df_final['MFI_Sell'] = mfi > 80
 
         # result = {
         #     "Best_Donchian_Window": int(best_params[0]),
@@ -705,7 +821,7 @@ class DataPreprocessor:
         #     "Metric": metric,
         #     "Horizons": horizons
         # }
-        1
+        
         # Volume Anomaly
         
         sma_volume = talib.SMA(self.df_final['Volume'], timeperiod=self.volume_params["Best_Vol_MA"])
@@ -714,10 +830,11 @@ class DataPreprocessor:
             volume_spike = self.df_final['Volume'] > (sma_volume * vol_coeff)
             self.df_final[f'VolAnomaly_Buy_{vol_coeff}'] = volume_spike & (self.df_final['Close'] > self.df_final['Open'])
             self.df_final[f'VolAnomaly_Sell_{vol_coeff}'] = volume_spike & (self.df_final['Close'] < self.df_final['Open'])
-
+         
         # -------------------
         # Breakout con conferma volumi + ADX
         # -------------------
+
         self.df_final["Donchian_High"] = self.df_final["High"].rolling(window=self.volume_params["Best_Donchian_Window"]).max()
         self.df_final["Donchian_Low"] = self.df_final["Low"].rolling(window=self.volume_params["Best_Donchian_Window"]).min()
         self.df_final["Vol_MA"] = talib.SMA(self.df_final["Volume"], timeperiod=self.volume_params["Best_Vol_MA"])
