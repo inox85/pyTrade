@@ -910,6 +910,7 @@ class DataPreprocessor:
         Genera target multi-orizzonte coerenti:
         - Target_{h}: Buy (1), Sell (-1), Hold (0) basati su soglie percentuali
         - Profit_{h}: rendimento percentuale nei prossimi h passi
+        - Cumulative_{h}: crescita cumulativa fino al prossimo Target non-zero
 
         :param df: DataFrame con almeno la colonna 'Close'
         :param horizons: lista degli orizzonti temporali in numero di candele
@@ -931,6 +932,16 @@ class DataPreprocessor:
             df[f'Target_{h}'] = 0
             df.loc[future_return > thr, f'Target_{h}'] = 1
             df.loc[future_return < -thr, f'Target_{h}'] = -1
+
+            # --- Colonna cumulativa fino al prossimo segnale ---
+            cumulative = []
+            cum_sum = 0
+            for idx, row in df.iterrows():
+                cum_sum += row[f'Profit_{h}']
+                cumulative.append(cum_sum)
+                if row[f'Target_{h}'] != 0:
+                    cum_sum = 0
+            df[f'Cumulative_{h}'] = cumulative
 
         # Rimuove eventuali NaN finali dovuti a shift
         df.dropna(subset=[f'Profit_{h}' for h in horizons] + [f'Target_{h}' for h in horizons], inplace=True)
