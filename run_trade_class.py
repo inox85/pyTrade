@@ -11,7 +11,8 @@ instruments = [INSTRUMENT_US_AAPL_US_USD, INSTRUMENT_US_PLTR_US_USD]
 symbols = ["TSLA", "MSFT", "PLTR", "AAPL", "NVDA", "SPY"]
 
 def main():
-    for symbol in symbols:
+
+    for symbol in symbols:        
         alpaca = AlpacaService(symbol=symbol)
 
         now = datetime.now(timezone.utc)
@@ -24,10 +25,15 @@ def main():
         start_date = start_d.strftime("%Y-%m-%dT%H:%M:%SZ")
         end_date = end_d.strftime("%Y-%m-%dT%H:%M:%SZ")
 
+        print("Dowload data per:", symbol)
+        
         df_history = alpaca.download_data("1H", start_date=start_date, end_date=end_date )
 
         prepocessor = DataPreprocessor(df_history, symbol=symbol, interval="1H")
-        prepocessor.generate_dataset()
+
+        df = prepocessor.get_dataset()
+
+        df_tecnical = prepocessor.generate_tecnical_dataset(df)
 
         # for instrument in instruments:
         #     print("Downloading data for:", instrument)
