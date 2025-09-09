@@ -1,10 +1,7 @@
-from data_preprocessor import DataPreprocessor
-from data_downloader import DataDownloader
+from data_elaboration import DataPreprocessor
 from dukascopy_python.instruments import INSTRUMENT_US_AAPL_US_USD, INSTRUMENT_US_PLTR_US_USD
-import dukascopy_python 
 from datetime import datetime, timedelta, timezone
 from alpaca_service import AlpacaService
-
 
 instruments = [INSTRUMENT_US_AAPL_US_USD, INSTRUMENT_US_PLTR_US_USD]
 
@@ -39,9 +36,9 @@ def main():
 
         df_targets = prepocessor.generate_targets_dataset(df_tecnical)
 
-        print("Salvataggio dataseti in csv...")
+        print("Salvataggio dataset in csv...")
 
-        df_targets.to_csv(f"data/{symbol}_processed.csv", sep=';', encoding='utf-8')
+        df_targets.to_csv(f"datasets/{symbol}_targets.csv", sep=';', encoding='utf-8')
 
 
 if __name__ == "__main__":      

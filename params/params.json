@@ -330,6 +330,61 @@
                 ],
                 "Signals": 1787,
                 "Inverted:": true
+            },
+            "volumeAdx": {
+                "Best_Donchian_Window": 2,
+                "Best_Vol_MA": 4,
+                "Best_ADX_Timeperiod": 12,
+                "Best_ADX_Threshold": 14.5,
+                "Best_Volume_Multiplier": 1.05,
+                "Best_Score": 75.53050744455467,
+                "Metric": "cumulative",
+                "Horizons": [
+                    1,
+                    3,
+                    5
+                ],
+                "Inverted": true,
+                "Signals": 322
+            },
+            "mfi": {
+                "MFI_TimePeriod": 39,
+                "MFI_Low": 39,
+                "MFI_High": 60,
+                "Best_Score": 337.212459,
+                "Metric": "cumulative",
+                "Horizons": [
+                    1,
+                    3,
+                    5
+                ],
+                "Inverted": false
+            },
+            "rsi": {
+                "Best_RSI_Period": 13,
+                "Best_RSI_Low": 27,
+                "Best_RSI_High": 60,
+                "Best_Score": 259.124119,
+                "Metric": "cumulative",
+                "Horizons": [
+                    1,
+                    3,
+                    5
+                ],
+                "Inverted": true,
+                "Signals": 1782
+            },
+            "tradeCountNorm": {
+                "Best_TradeCountNorm_Window": 20,
+                "Best_Score": 293.967559,
+                "Metric": "cumulative",
+                "Horizons": [
+                    1,
+                    3,
+                    5
+                ],
+                "Inverted": true,
+                "Signals": 1776
             }
         }
     }

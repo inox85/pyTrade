@@ -732,7 +732,7 @@ class DataPreprocessor:
         macd, macdsignal, macdhist = talib.MACD(df["Close"], fastperiod=self.macd_params["MACD_Fast_length"], slowperiod=self.macd_params["MACD_Slow_length"], signalperiod=self.macd_params["MACD_Signal_length"])
 
         df["MACD"] = macd
-        df["MACD_signal"] = macdsignal
+        df["MACD_signal "] = macdsignal
         df["MACD_hist"] = macdhist
 
         df["MACD_diff"] = macd - macdsignal
@@ -778,12 +778,18 @@ class DataPreprocessor:
         # =========================================
         # 6) Genera incroci per tutte le coppie di medie
         # =========================================
+
         new_cols = {}
         for i in range(len(ma_columns)):
-            for j in range(i+1, len(ma_columns)):
+            for j in range(i + 1, len(ma_columns)):
                 col1, col2 = ma_columns[i], ma_columns[j]
-                new_cols[f"{col1}_x_{col2}_UP"] = crossover(df[col1], df[col2])
-                new_cols[f"{col1}_x_{col2}_DOWN"] = crossunder(df[col1], df[col2])
+
+                # distanza percentuale tra le medie
+                df[f"{col1}_x_{col2}_diff"] = (df[col1] - df[col2]) / df[col2]
+
+                # forza dell'incrocio (solo se oggi c'è crossover/crossunder)
+                df[f"{col1}_x_{col2}_UP_cont"] = df[f"{col1}_x_{col2}_diff"].where(crossover(df[col1], df[col2]), 0)
+                df[f"{col1}_x_{col2}_DOWN_cont"] = df[f"{col1}_x_{col2}_diff"].where(crossunder(df[col1], df[col2]), 0)
 
         # Concateno tutto insieme in una volta
         df = pd.concat([df, pd.DataFrame(new_cols, index=df.index)], axis=1)
@@ -798,13 +804,15 @@ class DataPreprocessor:
         # --- Bollinger Bands ---
         upper, middle, lower = talib.BBANDS(df["Close"], timeperiod=self.bb_params["BBANDS_TimePeriod"], nbdevup=self.bb_params["BBANDS_NBDevUp"], nbdevdn=self.bb_params["BBANDS_NBDevDn"], matype=self.bb_params["BBANDS_MAType"])
 
+        # Larghezza BB
         df["BB_Width"] = (upper - lower) / middle
-        df["BB_Percent_b"] = (df["Close"] - lower) / (upper - lower)
-        df["BB_Breakout_up"] = (df["Close"] > upper).astype(int)
-        df["BB_Breakout_down"] = (df["Close"] < lower).astype(int)
 
-        #df["BB_Buy"] = (df["Close"] < lower).astype(int)
-        #df["BB_Sell"] = (df["Close"] > upper).astype(int)
+        # Percentuale posizione prezzo tra le bande
+        df["BB_Percent_b"] = (df["Close"] - lower) / (upper - lower)
+
+        # Breakout continuo: distanza dal bordo superiore/inferiore
+        df["BB_Breakout_up_cont"] = df["Close"] - upper  # >0 indica quanto è sopra l'upper band
+        df["BB_Breakout_down_cont"] = lower - df["Close"]  # >0 indica quanto è sotto la lower band
 
         df["Body_today"] = abs(df["Close"] - df["Open"])
         df["Body_prev"] = abs(df["Close"].shift(1) - df["Open"].shift(1))
@@ -848,8 +856,8 @@ class DataPreprocessor:
         # Differenze e momentum continui
         df["OBV_diff"] = df["OBV"].diff()
         df["OBV_pct"] = df["OBV"].pct_change()
-        df["OBV_slope"] = df["OBV"].diff().rolling(5).mean()
-        df["OBV_momentum"] = df["OBV"] - df["OBV"].rolling(20).mean()
+        df["OBV_slope"] = df["OBV"].diff().rolling(self.obv_params["Best_OBV_Slope_Window"]).mean()
+        df["OBV_momentum"] = df["OBV"] - df["OBV"].rolling(self.obv_params["Best_OBV_Momentum_Window"]).mean()
 
         # VWAP
         df["VWAP"] = (df["Close"] * df["Volume"]).cumsum() / df["Volume"].cumsum()
@@ -857,7 +865,9 @@ class DataPreprocessor:
         df["Close_VWAP_Ratio"] = df["Close"] / df["VWAP"]
 
         df["Avg_Trade_Size"] = df["Volume"] / df["trade_count"]
-        df["Trade_Count_Norm"] = df["trade_count"] / df["trade_count"].rolling(3).mean()
+
+        for l in [3, 5, 10]:
+            df[f"Trade_Count_Norm_{l}"] = df["trade_count"] / df["trade_count"].rolling(l).mean()
 
         # Money Flow Index (MFI)
 
@@ -871,50 +881,61 @@ class DataPreprocessor:
         # -------------------
         # Breakout con conferma volumi + ADX
         # -------------------
-
         df["Donchian_High"] = df["High"].rolling(window=self.volume_params["Best_Donchian_Window"]).max()
         df["Donchian_Low"] = df["Low"].rolling(window=self.volume_params["Best_Donchian_Window"]).min()
         df["Vol_MA"] = talib.SMA(df["Volume"], timeperiod=self.volume_params["Best_Vol_MA"])
         df["ADX"] = talib.ADX(df["High"], df["Low"], df["Close"], timeperiod=self.volume_params["Best_ADX_Timeperiod"])
         adx_threshold = self.volume_params["Best_ADX_Threshold"]
 
-        # df["Breakout_Up"] = (
-        #     (df["Close"] > df["Donchian_High"].shift(1)) &
-        #     (df["Volume"] > df["Vol_MA"]) &
-        #     (df["ADX"] > adx_threshold)
-        # )
+        # Distanza del prezzo dalla banda superiore/inferiore
+        df["Donchian_Close_HighDiff"] = df["Close"] - df["Donchian_High"]
+        df["Donchian_Close_LowDiff"] = df["Close"] - df["Donchian_Low"]
 
-        # df["Breakout_Down"] = (
-        #     (df["Close"] < df["Donchian_Low"].shift(1)) &
-        #     (df["Volume"] > df["Vol_MA"]) &
-        #     (df["ADX"] > adx_threshold)
-        # )
+        # Percentuale relativa
+        df["Donchian_Close_HighPct"] = (df["Close"] - df["Donchian_High"]) / df["Donchian_High"]
+        df["Donchian_Close_LowPct"] = (df["Close"] - df["Donchian_Low"]) / df["Donchian_Low"]
+
+        df["Vol_Ratio"] = df["Volume"] / (df["Vol_MA"] + 1e-9)  # rapporto tra volume attuale e media
+        df["Vol_Diff"] = df["Volume"] - df["Vol_MA"]
+
+        df["ADX_Above_Threshold"] = df["ADX"] - adx_threshold  # >0 trend forte, <0 trend debole
+        df["ADX_Slope"] = df["ADX"].diff()  # pendenza ADX
+
+        print(df.columns)
+
         return df
-    
-    def generate_targets_dataset(self, df,  horizons=[5, 10, 20], threshold=0.01):
+
+    def generate_targets_dataset(self, df, horizons=[1, 5, 10, 20, 50], thresholds=None):
         """
-        Genera target multi-orizzonte:
-        - Target_{h}: Buy (1), Sell (-1), Hold (0) basati su una soglia percentuale
+        Genera target multi-orizzonte coerenti:
+        - Target_{h}: Buy (1), Sell (-1), Hold (0) basati su soglie percentuali
         - Profit_{h}: rendimento percentuale nei prossimi h passi
 
+        :param df: DataFrame con almeno la colonna 'Close'
         :param horizons: lista degli orizzonti temporali in numero di candele
-        :param threshold: soglia percentuale per classificare Buy/Sell/Hold
+        :param thresholds: dizionario opzionale {h: soglia_percentuale}, default 0.01 per tutti
         """
+        import numpy as np
+
+        if thresholds is None:
+            thresholds = {h: 0.01 for h in horizons}  # default 1% per ogni orizzonte
+
         for h in horizons:
             # Rendimento percentuale futuro
             future_return = (df['Close'].shift(-h) - df['Close']) / df['Close']
-
-            # Profitto percentuale
             df[f'Profit_{h}'] = future_return
 
-            # Target classificazione
-            df[f'Target_{h}'] = np.where(
-                future_return > threshold, 1,     # Buy
-                np.where(future_return < -threshold, -1, 0)  # Sell o Hold
-            )
+            thr = thresholds.get(h, 0.01)  # soglia per questo orizzonte
 
-            return df
-        #self.df.to_csv(f"data/{self.symbol}_processed.csv", sep=';', encoding='utf-8')
+            # Target coerente: -1, 0, 1
+            df[f'Target_{h}'] = 0
+            df.loc[future_return > thr, f'Target_{h}'] = 1
+            df.loc[future_return < -thr, f'Target_{h}'] = -1
+
+        # Rimuove eventuali NaN finali dovuti a shift
+        df.dropna(subset=[f'Profit_{h}' for h in horizons] + [f'Target_{h}' for h in horizons], inplace=True)
+
+        return df
 
     def show_full_dataframe(self):
         # Stampiamo DataFrame completo

@@ -53,7 +53,7 @@ class AlpacaService:
         bars = bars[["Gmt time", "Open", "High", "Low", "Close", "Volume", "trade_count", "vwap"]]
 
         # Esporta senza indice
-        bars.to_csv("data/candles.csv", index=False)
+        bars.to_csv(f"downloads/{self.symbol}.csv", index=False)
 
         return bars
 
