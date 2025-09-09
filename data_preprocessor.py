@@ -9,7 +9,6 @@ import os
 class DataPreprocessor:
     def __init__(self, df, symbol, interval, recalculate_params=False):      
         self.interval = interval
-        self.df_origin = df
         self.df_final = df.copy()
         self.symbol = symbol
         self.params_file = "params/params.json"
@@ -36,23 +35,41 @@ class DataPreprocessor:
 
         self.config_params = data[self.symbol][self.interval]
 
+        required_keys = ["obv", "volumeAdx", "mfi", "rsi", "tradeCountNorm", "bBands", "macd"]
+
+        missing_keys = required_keys - self.config_params.keys()
+
+        if missing_keys:
+            print(f"Mancano queste chiavi: {missing_keys}")
+            self.recalculate_params = True
+        else:
+            print(f"Tutte le chiavi sono presenti per {self.symbol} {self.interval}✅")
+            self.recalculate_params = False
+
         if self.recalculate_params:
-            self.calculate_params()
+            self.calculate_params(missing_keys)
         else:
             self.load_params()
 
         print(self.config_params)
 
 
-    def calculate_params(self):
+    def calculate_params(self, missing_params = []):
         print("Inizio ricalcolo parametri...")
-        self.macd_params = self.optimize_macd()
-        self.obv_params = self.optimize_obv()
-        self.volume_params = self.optimize_volume_adx()   
-        self.mfi_params = self.optimize_mfi()   
-        self.rsi_params = self.optimize_rsi()
-        self.trade_count_params =self.optimize_trade_count_norm()
-        self.bb_params = self.optimize_bbands()
+        if "macd" in missing_params:
+            self.macd_params = self.optimize_macd()
+        if "obv" in missing_params: 
+            self.obv_params = self.optimize_obv()
+        if "volumeAdx" in missing_params:
+            self.volume_params = self.optimize_volume_adx()
+        if "mfi" in missing_params:
+            self.mfi_params = self.optimize_mfi()
+        if "rsi" in missing_params:   
+            self.rsi_params = self.optimize_rsi()
+        if "tradeCountNorm" in missing_params:
+            self.trade_count_params =self.optimize_trade_count_norm()
+        if "bBands" in missing_params:
+            self.bb_params = self.optimize_bbands()
 
     def load_params(self):
         print("Inizio caricamento parametri...")
@@ -411,7 +428,7 @@ class DataPreprocessor:
         total = len(slope_window_range) * len(momentum_window_range)
 
         for invert in [False, True]:
-            pbar = tqdm(total=total, desc="Ottimizzazione OBV")
+            pbar = tqdm(total=total, desc=f"Ottimizzazione OBV Inversione-{invert}")
             for slope_win, mom_win in itertools.product(slope_window_range, momentum_window_range):
                 # --- Calcolo OBV ---
                 obv = talib.OBV(close, volume)
@@ -706,9 +723,10 @@ class DataPreprocessor:
         return self.df_final
 
     def generate_tecnical_dataset(self, df):
-        
-        self.macd_params = self.optimize_macd()
-            
+        print("Carico parametri da json...")
+
+        self.load_params()
+
         print("Inizio elaborazione dataset...")
 
         macd, macdsignal, macdhist = talib.MACD(df["Close"], fastperiod=self.macd_params["MACD_Fast_length"], slowperiod=self.macd_params["MACD_Slow_length"], signalperiod=self.macd_params["MACD_Signal_length"])
@@ -871,8 +889,9 @@ class DataPreprocessor:
         #     (df["Volume"] > df["Vol_MA"]) &
         #     (df["ADX"] > adx_threshold)
         # )
-
-    def generate_targets(self, df,  horizons=[5, 10, 20], threshold=0.01):
+        return df
+    
+    def generate_targets_dataset(self, df,  horizons=[5, 10, 20], threshold=0.01):
         """
         Genera target multi-orizzonte:
         - Target_{h}: Buy (1), Sell (-1), Hold (0) basati su una soglia percentuale
@@ -883,7 +902,7 @@ class DataPreprocessor:
         """
         for h in horizons:
             # Rendimento percentuale futuro
-            future_return = (self.df_final['Close'].shift(-h) - self.df_final['Close']) / self.df_final['Close']
+            future_return = (df['Close'].shift(-h) - df['Close']) / df['Close']
 
             # Profitto percentuale
             df[f'Profit_{h}'] = future_return

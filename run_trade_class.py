@@ -1,4 +1,4 @@
-from data_preparation import DataPreprocessor
+from data_preprocessor import DataPreprocessor
 from data_downloader import DataDownloader
 from dukascopy_python.instruments import INSTRUMENT_US_AAPL_US_USD, INSTRUMENT_US_PLTR_US_USD
 import dukascopy_python 
@@ -19,10 +19,12 @@ def main():
 
         start = (now - timedelta(days=365)).date()
 
-        start_d = datetime(start.year, start.month, start.day, 14, 30) 
-        end_d = datetime(now.year, now.month, now.day, 21, 0) 
+        start_d = datetime(start.year, start.month, start.day, 14, 30)
+
+        end_d = datetime(now.year, now.month, now.day, 21, 0)
 
         start_date = start_d.strftime("%Y-%m-%dT%H:%M:%SZ")
+
         end_date = end_d.strftime("%Y-%m-%dT%H:%M:%SZ")
 
         print("Dowload data per:", symbol)
@@ -35,18 +37,12 @@ def main():
 
         df_tecnical = prepocessor.generate_tecnical_dataset(df)
 
-        # for instrument in instruments:
-        #     print("Downloading data for:", instrument)
-        #     df_history = DataDownloader.download_data_to_dataframe(
-        #         instrument,
-        #         interval=dukascopy_python.INTERVAL_HOUR_1,
-        #         start=datetime(2024, 8, 6),
-        #         end=datetime.now()
-        #     )
-        #     prepocessor = DataPreprocessor(df_history, symbol=instrument, interval=dukascopy_python.INTERVAL_HOUR_1)
-        #     prepocessor.generate_dataset()
-        #     prepocessor.generate_targets()
-        #     prepocessor.show_full_dataframe()
+        df_targets = prepocessor.generate_targets_dataset(df_tecnical)
+
+        print("Salvataggio dataseti in csv...")
+
+        df_targets.to_csv(f"data/{symbol}_processed.csv", sep=';', encoding='utf-8')
+
 
 if __name__ == "__main__":      
     main()
