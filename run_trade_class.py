@@ -28,13 +28,13 @@ def main():
         
         df_history = alpaca.download_data("1H", start_date=start_date, end_date=end_date )
 
-        prepocessor = DataPreprocessor(df_history, symbol=symbol, interval="1H")
+        preprocessor = DataPreprocessor(df_history, symbol=symbol, interval="1H")
 
-        df = prepocessor.get_dataset()
+        df = preprocessor.get_dataset()
 
-        df_tecnical = prepocessor.generate_tecnical_dataset(df)
+        df_tecnical = preprocessor.generate_tecnical_dataset(df)
 
-        df_targets = prepocessor.generate_targets_dataset(df_tecnical)
+        df_targets = preprocessor.generate_targets_dataset(df_tecnical)
 
         print("Salvataggio dataset in csv...")
 
