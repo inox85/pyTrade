@@ -702,12 +702,11 @@ class DataPreprocessor:
         self.save_params("tradeCountNorm", params)
         return params
 
+    def get_dataset(self):
+        return self.df_final
 
-    def generate_dataset(self, df=None):
+    def generate_tecnical_dataset(self, df):
         
-        if df == None:
-            df = self.df_final
-
         self.macd_params = self.optimize_macd()
             
         print("Inizio elaborazione dataset...")
@@ -873,7 +872,7 @@ class DataPreprocessor:
         #     (df["ADX"] > adx_threshold)
         # )
 
-    def generate_targets(self, horizons=[5, 10, 20], threshold=0.01):
+    def generate_targets(self, df,  horizons=[5, 10, 20], threshold=0.01):
         """
         Genera target multi-orizzonte:
         - Target_{h}: Buy (1), Sell (-1), Hold (0) basati su una soglia percentuale
@@ -887,15 +886,16 @@ class DataPreprocessor:
             future_return = (self.df_final['Close'].shift(-h) - self.df_final['Close']) / self.df_final['Close']
 
             # Profitto percentuale
-            self.df_final[f'Profit_{h}'] = future_return
+            df[f'Profit_{h}'] = future_return
 
             # Target classificazione
-            self.df_final[f'Target_{h}'] = np.where(
+            df[f'Target_{h}'] = np.where(
                 future_return > threshold, 1,     # Buy
                 np.where(future_return < -threshold, -1, 0)  # Sell o Hold
             )
 
-        #return self.df_final
+            return df
+        #self.df.to_csv(f"data/{self.symbol}_processed.csv", sep=';', encoding='utf-8')
 
     def show_full_dataframe(self):
         # Stampiamo DataFrame completo
