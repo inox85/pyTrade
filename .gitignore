@@ -1,1 +1,6 @@
 data/temp.csv
+datasets/.~lock.PLTR_targets.csv\#
+datasets/AAPL_targets.csv
+datasets/NVDA_targets.csv
+datasets/SPY_targets.csv
+datasets/X_scaled.csv
