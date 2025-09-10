@@ -70,6 +70,7 @@ class DataPreprocessor:
             self.trade_count_params =self.optimize_trade_count_norm()
         if "bBands" in missing_params:
             self.bb_params = self.optimize_bbands()
+        print("Fine generazione dei parametri")
 
     def load_params(self):
         print("Inizio caricamento parametri...")
@@ -80,6 +81,7 @@ class DataPreprocessor:
         self.rsi_params = self.config_params["rsi"]
         self.trade_count_params = self.config_params["tradeCountNorm"]
         self.bb_params = self.config_params["bBands"]
+        print("Fine caricamento dei parametri")
 
     def load_json_safe(self, filepath, init_empty=True):
         """
@@ -948,6 +950,60 @@ class DataPreprocessor:
         # Rimuove eventuali NaN finali dovuti a shift
         df.dropna(subset=[f'Profit_{h}' for h in horizons] + [f'Target_{h}' for h in horizons], inplace=True)
 
+        return df
+
+    def generate_targets_tp_sl(
+            self,
+            df,
+            horizons=[1, 5, 10, 20],
+            tp_levels=[0.04, 0.05],  # Take Profit multipli
+            sl_level=0.02  # Stop Loss unico
+    ):
+        """
+        Genera target multi-classe con SL unico e più TP.
+        Classi:
+          0 -> Nessun TP/SL colpito
+          1 -> SL colpito
+          2 -> TP1 colpito
+          3 -> TP2 colpito
+          ...
+        """
+        import numpy as np
+
+        for h in horizons:
+            targets = []
+            for i in range(len(df)):
+                future_prices = df['Close'].iloc[i + 1:i + h + 1]
+                if len(future_prices) < h:
+                    targets.append(np.nan)
+                    continue
+
+                entry = df['Close'].iloc[i]
+                events = []
+
+                # Controllo TP multipli
+                for j, tp in enumerate(tp_levels, start=2):
+                    tp_level = entry * (1 + tp)
+                    hit_tp = np.where(future_prices >= tp_level)[0]
+                    if len(hit_tp) > 0:
+                        events.append((hit_tp[0], j))
+
+                # Controllo SL unico (classe 1)
+                sl = entry * (1 - sl_level)
+                hit_sl = np.where(future_prices <= sl)[0]
+                if len(hit_sl) > 0:
+                    events.append((hit_sl[0], 1))
+
+                if len(events) == 0:
+                    targets.append(0)  # nessun livello colpito
+                else:
+                    # prendo l’evento più vicino (il primo colpito)
+                    events.sort(key=lambda x: x[0])
+                    targets.append(events[0][1])
+
+            df[f'Target_sl_tp_{h}'] = targets
+
+        df.dropna(inplace=True)
         return df
 
     def show_full_dataframe(self):

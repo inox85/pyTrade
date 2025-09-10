@@ -38,7 +38,7 @@ def main():
 
         df_tecnical = preprocessor.generate_tecnical_dataset(df)
 
-        df_targets = preprocessor.generate_targets_dataset(df_tecnical)
+        df_targets = preprocessor.generate_targets_tp_sl(df_tecnical)
 
         print("Salvataggio dataset in csv...")
 
