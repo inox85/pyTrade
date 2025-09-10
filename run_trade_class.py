@@ -2,10 +2,14 @@ from data_elaboration import DataPreprocessor
 from dukascopy_python.instruments import INSTRUMENT_US_AAPL_US_USD, INSTRUMENT_US_PLTR_US_USD
 from datetime import datetime, timedelta, timezone
 from alpaca_service import AlpacaService
+from model_factory import ModelFactory
 
 instruments = [INSTRUMENT_US_AAPL_US_USD, INSTRUMENT_US_PLTR_US_USD]
 
-symbols = ["TSLA", "MSFT", "PLTR", "AAPL", "NVDA", "SPY"]
+#symbols = ["TSLA", "MSFT", "PLTR", "AAPL", "NVDA", "SPY"]
+
+symbols = ["PLTR"]
+interval = "1Day"
 
 def main():
 
@@ -14,7 +18,7 @@ def main():
 
         now = datetime.now(timezone.utc)
 
-        start = (now - timedelta(days=365)).date()
+        start = (now - timedelta(days=1000)).date()
 
         start_d = datetime(start.year, start.month, start.day, 14, 30)
 
@@ -26,9 +30,9 @@ def main():
 
         print("Dowload data per:", symbol)
         
-        df_history = alpaca.download_data("1H", start_date=start_date, end_date=end_date )
+        df_history = alpaca.download_data(interval, start_date=start_date, end_date=end_date )
 
-        preprocessor = DataPreprocessor(df_history, symbol=symbol, interval="1H")
+        preprocessor = DataPreprocessor(df_history, symbol=symbol, interval=interval)
 
         df = preprocessor.get_dataset()
 
@@ -40,6 +44,7 @@ def main():
 
         df_targets.to_csv(f"datasets/{symbol}_targets.csv", sep=';', encoding='utf-8')
 
+        model_factory = ModelFactory(df_targets)
 
 if __name__ == "__main__":      
     main()

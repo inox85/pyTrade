@@ -7,7 +7,7 @@ import json
 import os
 
 class DataPreprocessor:
-    def __init__(self, df, symbol, interval, recalculate_params=False):      
+    def __init__(self, df, symbol, interval, recalculate_params=True):
         self.interval = interval
         self.df_final = df.copy()
         self.symbol = symbol
@@ -48,8 +48,8 @@ class DataPreprocessor:
 
         if self.recalculate_params:
             self.calculate_params(missing_keys)
-        else:
-            self.load_params()
+
+        self.load_params()
 
         print(self.config_params)
 
@@ -116,7 +116,7 @@ class DataPreprocessor:
         with open(self.params_file, "w") as f:
             json.dump(data, f, indent=4)
 
-    def get_score(self, close, pos, horizons=[1,3,5],metric="cumulative"):
+    def get_score(self, close, pos, horizons=[1, 3, 5],metric="cumulative"):
         horizon_scores = []
         for h in horizons:
             future_returns = close.pct_change(h).shift(-h)
@@ -139,7 +139,6 @@ class DataPreprocessor:
 
         score = sum(horizon_scores)
         return score
-
 
     def optimize_macd(self, 
                   fast_range=(5, 20), 
@@ -188,7 +187,8 @@ class DataPreprocessor:
 
         total = len(grid) # due volte per invert=False e True
 
-        for invert in [False, True]:
+        #for invert in [False, True]:
+        for invert in [False]:
             pbar = tqdm(total=total, desc=f"Ottimizzazione MACD multi-horizon Inversione->{invert}")
             for fast, slow, signal in grid:
                 if fast >= slow:
@@ -270,7 +270,8 @@ class DataPreprocessor:
 
         total = len(rsi_period_range) * len(rsi_low_range) * len(rsi_high_range)
 
-        for invert in [False, True]:                 
+        # for invert in [False, True]:
+        for invert in [False]:
             pbar = tqdm(total=total, desc=f"Ottimizzazione RSI Inversione->{invert}")
             for period, low_thr, high_thr in itertools.product(rsi_period_range,
                                                             rsi_low_range,
@@ -349,7 +350,8 @@ class DataPreprocessor:
 
         total = len(timeperiod_range) * len(low_thr_range) * len(high_thr_range)
 
-        for invert in [False, True]:
+        # for invert in [False, True]:
+        for invert in [False]:
             pbar = tqdm(total=total, desc=f"Ottimizzazione MFI Inversione->{invert}")
             for tp, low_thr, high_thr in itertools.product(timeperiod_range, low_thr_range, high_thr_range):
                 if low_thr >= high_thr:  # soglie non valide
@@ -379,7 +381,6 @@ class DataPreprocessor:
                 pbar.set_postfix_str(postfix_str)
                 pbar.update(1)
             pbar.close()
-
 
             params = {
                 "MFI_TimePeriod": int(best_params[0]),
@@ -427,7 +428,8 @@ class DataPreprocessor:
 
         total = len(slope_window_range) * len(momentum_window_range)
 
-        for invert in [False, True]:
+        # for invert in [False, True]:
+        for invert in [False]:
             pbar = tqdm(total=total, desc=f"Ottimizzazione OBV Inversione-{invert}")
             for slope_win, mom_win in itertools.product(slope_window_range, momentum_window_range):
                 # --- Calcolo OBV ---
@@ -505,8 +507,9 @@ class DataPreprocessor:
         
 
         close = self.df_final["Close"]
-        for invert in  [False, True]:
-            pbar = tqdm(total=total, desc="Ottimizzazione BBANDS")
+        # for invert in [False, True]:
+        for invert in [False]:
+            pbar = tqdm(total=total, desc=f"Ottimizzazione BBANDS Inversione->{invert}")
             for tp, up, dn, matype in itertools.product(timeperiod_range, nbdevup_range, nbdevdn_range, matype_range):
 
                 upper, middle, lower = talib.BBANDS(close, timeperiod=tp, nbdevup=up, nbdevdn=dn, matype=matype)
@@ -582,9 +585,9 @@ class DataPreprocessor:
 
         total = (len(donchian_range) * len(vol_ma_range) * len(adx_period_range) *
                 len(adx_threshold_range) * len(vol_mult_range))
-        
 
-        for invert in [False, True]:
+        # for invert in [False, True]:
+        for invert in [False]:
             pbar = tqdm(total=total, desc=f"Ottimizzazione Volume+ADX Inversione->{invert}")
             for donchian_w, vol_ma, adx_period, adx_thr, vm in itertools.product(
                     donchian_range, vol_ma_range, adx_period_range, adx_threshold_range, vol_mult_range):
@@ -673,7 +676,7 @@ class DataPreprocessor:
 
         total = len(window_range)
 
-        for invert in invert_strategy:
+        for invert in [False]:
             pbar = tqdm(total=total, desc=f"Ottimizzazione trade_count_norm Inversione->{invert}")
             for window in window_range:
                 # --- Calcolo trade_count_norm ---
@@ -901,7 +904,6 @@ class DataPreprocessor:
         df["ADX_Above_Threshold"] = df["ADX"] - adx_threshold  # >0 trend forte, <0 trend debole
         df["ADX_Slope"] = df["ADX"].diff()  # pendenza ADX
 
-        print(df.columns)
 
         return df
 
@@ -929,9 +931,9 @@ class DataPreprocessor:
             thr = thresholds.get(h, 0.01)  # soglia per questo orizzonte
 
             # Target coerente: -1, 0, 1
-            df[f'Target_{h}'] = 0
-            df.loc[future_return > thr, f'Target_{h}'] = 1
-            df.loc[future_return < -thr, f'Target_{h}'] = -1
+            df[f'Target_{h}'] = 1
+            df.loc[future_return > thr, f'Target_{h}'] = 2
+            df.loc[future_return < -thr, f'Target_{h}'] = -0
 
             # --- Colonna cumulativa fino al prossimo segnale ---
             cumulative = []
