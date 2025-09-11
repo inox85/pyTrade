@@ -6,6 +6,91 @@ import itertools
 import json
 import os
 
+class TargetGenerator:
+
+    def generate_profit_and_target(self, df, horizons=[1,5,10,20], thresholds=None):
+        """
+        Genera Profit, Target e Cumulative per ogni orizzonte
+        """
+        if thresholds is None:
+            thresholds = {h: 0.01 for h in horizons}
+
+        for h in horizons:
+            # Profit percentuale
+            df[f'Profit_{h}'] = (df['Close'].shift(-h) - df['Close']) / df['Close']
+
+            # Target direzionale
+            thr = thresholds.get(h, 0.01)
+            df[f'Target_{h}'] = 0
+            df.loc[df[f'Profit_{h}'] > thr, f'Target_{h}'] = 1
+            df.loc[df[f'Profit_{h}'] < -thr, f'Target_{h}'] = -1
+
+            # Cumulative
+            prof = df[f'Profit_{h}'].values
+            tgt = df[f'Target_{h}'].values
+            cumulative = np.zeros_like(prof)
+            cum_sum = 0
+            for i in range(len(prof)):
+                cum_sum += prof[i]
+                cumulative[i] = cum_sum
+                if tgt[i] != 0:
+                    cum_sum = 0
+            df[f'Cumulative_{h}'] = cumulative
+
+        return df
+
+    def generate_sl_tp_targets(self, df, horizons=[1,5,10,20], tp_levels=[0.03,0.04,0.05], sl_levels=[0.01,0.02]):
+        """
+        Genera target multi-livello per SL/TP
+        """
+        for h in horizons:
+            # Inizializza colonne SL e TP
+            for k in range(1, len(sl_levels)+1):
+                df[f'Target_sl_{h}_{k}'] = 0
+            for j in range(1, len(tp_levels)+1):
+                df[f'Target_tp_{h}_{j}'] = 0
+
+            for i in range(len(df)):
+                future_prices = df['Close'].iloc[i+1:i+h+1]
+                if len(future_prices) < h:
+                    continue
+
+                entry = df['Close'].iloc[i]
+
+                # SL multipli
+                for k, sl in enumerate(sl_levels, start=1):
+                    sl_level = entry * (1 - sl)
+                    if np.any(future_prices <= sl_level):
+                        df.at[i, f'Target_sl_{h}_{k}'] = 1
+
+                # TP multipli
+                for j, tp in enumerate(tp_levels, start=1):
+                    tp_level = entry * (1 + tp)
+                    if np.any(future_prices >= tp_level):
+                        df.at[i, f'Target_tp_{h}_{j}'] = 1
+
+        return df
+
+    def generate_all_targets_multilabel(self, df, horizons=[1,5,10,20], thresholds=None,
+                                        tp_levels=[0.03,0.04,0.05], sl_levels=[0.01,0.02]):
+        """
+        Wrapper per generare tutti i target multi-label
+        """
+        df = self.generate_profit_and_target(df, horizons, thresholds)
+        df = self.generate_sl_tp_targets(df, horizons, tp_levels, sl_levels)
+
+        # Rimuove NaN dovuti a shift
+        drop_cols = []
+        for h in horizons:
+            drop_cols += [f'Profit_{h}', f'Target_{h}', f'Cumulative_{h}']
+            drop_cols += [f'Target_sl_{h}_{k}' for k in range(1, len(sl_levels)+1)]
+            drop_cols += [f'Target_tp_{h}_{j}' for j in range(1, len(tp_levels)+1)]
+        df.dropna(subset=drop_cols, inplace=True)
+
+        return df
+
+
+
 class DataPreprocessor:
     def __init__(self, df, symbol, interval, recalculate_params=True):
         self.interval = interval
@@ -737,7 +822,7 @@ class DataPreprocessor:
         macd, macdsignal, macdhist = talib.MACD(df["Close"], fastperiod=self.macd_params["MACD_Fast_length"], slowperiod=self.macd_params["MACD_Slow_length"], signalperiod=self.macd_params["MACD_Signal_length"])
 
         df["MACD"] = macd
-        df["MACD_signal "] = macdsignal
+        df["MACD_signal"] = macdsignal
         df["MACD_hist"] = macdhist
 
         df["MACD_diff"] = macd - macdsignal
@@ -909,35 +994,38 @@ class DataPreprocessor:
 
         return df
 
-    def generate_targets_dataset(self, df, horizons=[1, 5, 10, 20, 50], thresholds=None):
+    def generate_all_targets(self, df, horizons=[1, 5, 10, 20],
+                             thresholds=None, tp_levels=[0.03, 0.04, 0.05], sl_levels=[0.01, 0.02]):
         """
-        Genera target multi-orizzonte coerenti:
-        - Target_{h}: Buy (1), Sell (-1), Hold (0) basati su soglie percentuali
-        - Profit_{h}: rendimento percentuale nei prossimi h passi
-        - Cumulative_{h}: crescita cumulativa fino al prossimo Target non-zero
+        Genera tutti i target multi-orizzonte:
+          - Profit_{h}: rendimento percentuale
+          - Target_{h}: direzione (-1,0,1)
+          - Cumulative_{h}: crescita cumulativa fino al prossimo Target non-zero
+          - Target_sl_tp_{h}: Stop Loss multi-livello e Take Profit multi-livello
 
         :param df: DataFrame con almeno la colonna 'Close'
-        :param horizons: lista degli orizzonti temporali in numero di candele
-        :param thresholds: dizionario opzionale {h: soglia_percentuale}, default 0.01 per tutti
+        :param horizons: lista di orizzonti temporali
+        :param thresholds: soglie percentuali per Target_{h} (-1,0,1)
+        :param tp_levels: lista di livelli Take Profit
+        :param sl_levels: lista di livelli Stop Loss
         """
         import numpy as np
 
         if thresholds is None:
-            thresholds = {h: 0.01 for h in horizons}  # default 1% per ogni orizzonte
+            thresholds = {h: 0.01 for h in horizons}
 
         for h in horizons:
-            # Rendimento percentuale futuro
+            # --- Profit percentuale ---
             future_return = (df['Close'].shift(-h) - df['Close']) / df['Close']
             df[f'Profit_{h}'] = future_return
 
-            thr = thresholds.get(h, 0.01)  # soglia per questo orizzonte
+            # --- Target direzionale ---
+            thr = thresholds.get(h, 0.01)
+            df[f'Target_{h}'] = 0
+            df.loc[future_return > thr, f'Target_{h}'] = 1
+            df.loc[future_return < -thr, f'Target_{h}'] = -1
 
-            # Target coerente: -1, 0, 1
-            df[f'Target_{h}'] = 1
-            df.loc[future_return > thr, f'Target_{h}'] = 2
-            df.loc[future_return < -thr, f'Target_{h}'] = -0
-
-            # --- Colonna cumulativa fino al prossimo segnale ---
+            # --- Cumulative fino al prossimo Target non-zero ---
             cumulative = []
             cum_sum = 0
             for idx, row in df.iterrows():
@@ -947,63 +1035,46 @@ class DataPreprocessor:
                     cum_sum = 0
             df[f'Cumulative_{h}'] = cumulative
 
-        # Rimuove eventuali NaN finali dovuti a shift
-        df.dropna(subset=[f'Profit_{h}' for h in horizons] + [f'Target_{h}' for h in horizons], inplace=True)
-
-        return df
-
-    def generate_targets_tp_sl(
-            self,
-            df,
-            horizons=[1, 5, 10, 20],
-            tp_levels=[0.04, 0.05],  # Take Profit multipli
-            sl_level=0.02  # Stop Loss unico
-    ):
-        """
-        Genera target multi-classe con SL unico e più TP.
-        Classi:
-          0 -> Nessun TP/SL colpito
-          1 -> SL colpito
-          2 -> TP1 colpito
-          3 -> TP2 colpito
-          ...
-        """
-        import numpy as np
-
-        for h in horizons:
-            targets = []
+            # --- Target SL/TP multi-livello ---
+            targets_sl_tp = []
             for i in range(len(df)):
                 future_prices = df['Close'].iloc[i + 1:i + h + 1]
                 if len(future_prices) < h:
-                    targets.append(np.nan)
+                    targets_sl_tp.append(np.nan)
                     continue
 
                 entry = df['Close'].iloc[i]
                 events = []
 
                 # Controllo TP multipli
-                for j, tp in enumerate(tp_levels, start=2):
+                for j, tp in enumerate(tp_levels, start=len(sl_levels) + 1):
                     tp_level = entry * (1 + tp)
                     hit_tp = np.where(future_prices >= tp_level)[0]
                     if len(hit_tp) > 0:
                         events.append((hit_tp[0], j))
 
-                # Controllo SL unico (classe 1)
-                sl = entry * (1 - sl_level)
-                hit_sl = np.where(future_prices <= sl)[0]
-                if len(hit_sl) > 0:
-                    events.append((hit_sl[0], 1))
+                # Controllo SL multipli
+                for k, sl in enumerate(sl_levels, start=1):
+                    sl_level = entry * (1 - sl)
+                    hit_sl = np.where(future_prices <= sl_level)[0]
+                    if len(hit_sl) > 0:
+                        events.append((hit_sl[0], k))
 
                 if len(events) == 0:
-                    targets.append(0)  # nessun livello colpito
+                    targets_sl_tp.append(0)
                 else:
-                    # prendo l’evento più vicino (il primo colpito)
+                    # prendi il primo evento che si verifica nel tempo
                     events.sort(key=lambda x: x[0])
-                    targets.append(events[0][1])
+                    targets_sl_tp.append(int(events[0][1]))
 
-            df[f'Target_sl_tp_{h}'] = targets
+            df[f'Target_sl_tp_{h}'] = targets_sl_tp
 
-        df.dropna(inplace=True)
+        # Rimuove NaN finali dovuti a shift
+        drop_cols = []
+        for h in horizons:
+            drop_cols += [f'Profit_{h}', f'Target_{h}', f'Cumulative_{h}', f'Target_sl_tp_{h}']
+        df.dropna(subset=drop_cols, inplace=True)
+
         return df
 
     def show_full_dataframe(self):

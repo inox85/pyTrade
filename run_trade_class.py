@@ -1,4 +1,4 @@
-from data_elaboration import DataPreprocessor
+from data_elaboration import DataPreprocessor, TargetGenerator
 from dukascopy_python.instruments import INSTRUMENT_US_AAPL_US_USD, INSTRUMENT_US_PLTR_US_USD
 from datetime import datetime, timedelta, timezone
 from alpaca_service import AlpacaService
@@ -38,13 +38,19 @@ def main():
 
         df_tecnical = preprocessor.generate_tecnical_dataset(df)
 
-        df_targets = preprocessor.generate_targets_tp_sl(df_tecnical)
+        target_generator = TargetGenerator()
+
+        df_targets = target_generator.generate_all_targets_multilabel(df_tecnical)
 
         print("Salvataggio dataset in csv...")
 
         df_targets.to_csv(f"datasets/{symbol}_targets.csv", sep=';', encoding='utf-8')
 
         model_factory = ModelFactory(df_targets)
+
+        model_factory.train_models()
+
+        model_factory.score_models()
 
 if __name__ == "__main__":      
     main()
