@@ -7,8 +7,8 @@ import json
 import os
 
 class TargetGenerator:
-
-    def generate_profit_and_target(self, df, horizons=[1,5,10,20], thresholds=None):
+    @staticmethod
+    def generate_profit_and_target(df, horizons=[1,5,10,20], thresholds=None):
         """
         Genera Profit, Target e Cumulative per ogni orizzonte
         """
@@ -39,7 +39,8 @@ class TargetGenerator:
 
         return df
 
-    def generate_sl_tp_targets(self, df, horizons=[1,5,10,20], tp_levels=[0.03,0.04,0.05], sl_levels=[0.01,0.02]):
+    @staticmethod
+    def generate_sl_tp_targets(df, horizons=[1,5,10,20], tp_levels=[0.03,0.04,0.05], sl_levels=[0.01,0.02]):
         """
         Genera target multi-livello per SL/TP
         """
@@ -124,36 +125,35 @@ class DataPreprocessor:
 
         missing_keys = required_keys - self.config_params.keys()
 
-        if missing_keys:
+        if self.recalculate_params:
+            self.calculate_params(missing_keys, True)
+        elif missing_keys:
             print(f"Mancano queste chiavi: {missing_keys}")
             self.recalculate_params = True
         else:
             print(f"Tutte le chiavi sono presenti per {self.symbol} {self.interval}✅")
             self.recalculate_params = False
 
-        if self.recalculate_params:
-            self.calculate_params(missing_keys)
-
         self.load_params()
 
         print(self.config_params)
 
 
-    def calculate_params(self, missing_params = []):
+    def calculate_params(self, missing_params = [], force_recalculate=False):
         print("Inizio ricalcolo parametri...")
-        if "macd" in missing_params:
+        if ("macd" in missing_params) or force_recalculate:
             self.macd_params = self.optimize_macd()
-        if "obv" in missing_params: 
+        if ("obv" in missing_params) or force_recalculate:
             self.obv_params = self.optimize_obv()
-        if "volumeAdx" in missing_params:
+        if ("volumeAdx" in missing_params) or force_recalculate:
             self.volume_params = self.optimize_volume_adx()
-        if "mfi" in missing_params:
+        if ("mfi" in missing_params) or force_recalculate:
             self.mfi_params = self.optimize_mfi()
-        if "rsi" in missing_params:   
+        if ("rsi" in missing_params) or force_recalculate:
             self.rsi_params = self.optimize_rsi()
-        if "tradeCountNorm" in missing_params:
+        if ("tradeCountNorm" in missing_params) or force_recalculate:
             self.trade_count_params =self.optimize_trade_count_norm()
-        if "bBands" in missing_params:
+        if ("bBands" in missing_params) or force_recalculate:
             self.bb_params = self.optimize_bbands()
         print("Fine generazione dei parametri")
 
@@ -990,90 +990,6 @@ class DataPreprocessor:
 
         df["ADX_Above_Threshold"] = df["ADX"] - adx_threshold  # >0 trend forte, <0 trend debole
         df["ADX_Slope"] = df["ADX"].diff()  # pendenza ADX
-
-
-        return df
-
-    def generate_all_targets(self, df, horizons=[1, 5, 10, 20],
-                             thresholds=None, tp_levels=[0.03, 0.04, 0.05], sl_levels=[0.01, 0.02]):
-        """
-        Genera tutti i target multi-orizzonte:
-          - Profit_{h}: rendimento percentuale
-          - Target_{h}: direzione (-1,0,1)
-          - Cumulative_{h}: crescita cumulativa fino al prossimo Target non-zero
-          - Target_sl_tp_{h}: Stop Loss multi-livello e Take Profit multi-livello
-
-        :param df: DataFrame con almeno la colonna 'Close'
-        :param horizons: lista di orizzonti temporali
-        :param thresholds: soglie percentuali per Target_{h} (-1,0,1)
-        :param tp_levels: lista di livelli Take Profit
-        :param sl_levels: lista di livelli Stop Loss
-        """
-        import numpy as np
-
-        if thresholds is None:
-            thresholds = {h: 0.01 for h in horizons}
-
-        for h in horizons:
-            # --- Profit percentuale ---
-            future_return = (df['Close'].shift(-h) - df['Close']) / df['Close']
-            df[f'Profit_{h}'] = future_return
-
-            # --- Target direzionale ---
-            thr = thresholds.get(h, 0.01)
-            df[f'Target_{h}'] = 0
-            df.loc[future_return > thr, f'Target_{h}'] = 1
-            df.loc[future_return < -thr, f'Target_{h}'] = -1
-
-            # --- Cumulative fino al prossimo Target non-zero ---
-            cumulative = []
-            cum_sum = 0
-            for idx, row in df.iterrows():
-                cum_sum += row[f'Profit_{h}']
-                cumulative.append(cum_sum)
-                if row[f'Target_{h}'] != 0:
-                    cum_sum = 0
-            df[f'Cumulative_{h}'] = cumulative
-
-            # --- Target SL/TP multi-livello ---
-            targets_sl_tp = []
-            for i in range(len(df)):
-                future_prices = df['Close'].iloc[i + 1:i + h + 1]
-                if len(future_prices) < h:
-                    targets_sl_tp.append(np.nan)
-                    continue
-
-                entry = df['Close'].iloc[i]
-                events = []
-
-                # Controllo TP multipli
-                for j, tp in enumerate(tp_levels, start=len(sl_levels) + 1):
-                    tp_level = entry * (1 + tp)
-                    hit_tp = np.where(future_prices >= tp_level)[0]
-                    if len(hit_tp) > 0:
-                        events.append((hit_tp[0], j))
-
-                # Controllo SL multipli
-                for k, sl in enumerate(sl_levels, start=1):
-                    sl_level = entry * (1 - sl)
-                    hit_sl = np.where(future_prices <= sl_level)[0]
-                    if len(hit_sl) > 0:
-                        events.append((hit_sl[0], k))
-
-                if len(events) == 0:
-                    targets_sl_tp.append(0)
-                else:
-                    # prendi il primo evento che si verifica nel tempo
-                    events.sort(key=lambda x: x[0])
-                    targets_sl_tp.append(int(events[0][1]))
-
-            df[f'Target_sl_tp_{h}'] = targets_sl_tp
-
-        # Rimuove NaN finali dovuti a shift
-        drop_cols = []
-        for h in horizons:
-            drop_cols += [f'Profit_{h}', f'Target_{h}', f'Cumulative_{h}', f'Target_sl_tp_{h}']
-        df.dropna(subset=drop_cols, inplace=True)
 
         return df
 

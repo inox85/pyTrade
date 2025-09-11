@@ -38,6 +38,11 @@
     "last_opened_file_path": "X:/pyTrade"
   }
 }]]></component>
+  <component name="RecentsManager">
+    <key name="MoveFile.RECENT_KEYS">
+      <recent name="X:\pyTrade" />
+    </key>
+  </component>
   <component name="RunManager">
     <configuration name="run_trade_class" type="PythonConfigurationType" factoryName="Python" nameIsGenerated="true">
       <module name="PyTrade" />
